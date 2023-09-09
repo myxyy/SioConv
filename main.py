@@ -46,9 +46,9 @@ class Lang(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         text, text_next = batch
 
-        if self.clear_count % 128 == 0:
-            self.model.clear_hidden()
-        self.clear_count += 1
+        #if self.clear_count % 128 == 0:
+        #    self.model.clear_hidden()
+        #self.clear_count += 1
 
         text_hat = self(text)
 
