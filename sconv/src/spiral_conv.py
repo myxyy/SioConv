@@ -26,7 +26,7 @@ class SpiralConvConvBlock(nn.Module):
         self.is_refresh = True
 
     # (batch, len, dim) -> (batch, len, dim)
-    def forward(self, x):
+    def forward(self, x, hidden_last):
         batch = x.shape[0]
         len = x.shape[1]
         if self.last_conv is None:
@@ -37,11 +37,9 @@ class SpiralConvConvBlock(nn.Module):
         filter_fft = torch.fft.fft(filter, n=len*2, dim=0) # (len*2, dim)
         x_fft = torch.fft.fft(x, n=len*2, dim=1) # (batch, len*2, dim)
         conv_filter_x = torch.fft.ifft(filter_fft.unsqueeze(0) * x_fft, dim=1).narrow(1,0,len) # (batch, len, dim)
-        conv_with_past = conv_filter_x + self.last_conv.detach().unsqueeze(1)*phazor_progression.unsqueeze(0)*phazor.unsqueeze(0).unsqueeze(0)
-        if self.is_refresh:
-            self.last_conv = conv_with_past[:,-1,:]
+        conv_with_past = conv_filter_x + hidden_last.unsqueeze(1)*phazor_progression.unsqueeze(0)*phazor.unsqueeze(0).unsqueeze(0)
         
-        return conv_with_past.real
+        return conv_with_past
 
     def reset_hidden(self):
         self.last_conv = None
@@ -59,18 +57,18 @@ class SpiralConvBlock(nn.Module):
         self.ffn = FFN(dim, dim_ff_scale, dropout)
         self.layer_norm = nn.LayerNorm(dim)
 
-    def forward(self, x):
+    def forward(self, x, hidden_last):
         x_ = x
         x = self.layer_norm(x)
-        x = self.spiral_conv(x)
-        x = x + x_
+        hidden = self.spiral_conv(x, hidden_last)
+        x = hidden.real + x_
 
         x_ = x
         x = self.layer_norm(x)
         x = self.ffn(x)
         x = x + x_
 
-        return x
+        return x, hidden
 
     def reset_hidden(self):
         self.spiral_conv.reset_hidden()
@@ -86,10 +84,13 @@ class SpiralConv(nn.Module):
         super().__init__()
         self.block_list = nn.ModuleList([SpiralConvBlock(dim, dim_ff_scale, dropout) for _ in range(depth)])
 
-    def forward(self, x):
-        for block in self.block_list:
-            x = block(x)
-        return x 
+    def forward(self, x, hidden_last):
+        hidden_list = []
+        for i, block in enumerate(self.block_list):
+            x, hidden_block = block(x, hidden_last[:,i,:]) # ((batch, len, dim), (batch, dim)) -> ((batch, len, dim), (batch, len, dim))
+            hidden_list.append(hidden_block)
+        hidden = torch.stack(hidden_list, dim=1)
+        return x, hidden
 
     def reset_hidden(self):
         for block in self.block_list:

@@ -55,12 +55,12 @@ class Lang(pl.LightningModule):
         self.log("train_loss", loss, on_epoch=False, prog_bar=True)
         return loss
 
-    def forward(self, x):
+    def forward(self, x, hidden_last):
         x = nn.functional.one_hot(x.long(), self.vocab_size).float()
         x = self.token_in(x)
-        x = self.model(x)
+        x, hidden = self.model(x, hidden_last)
         x_hat = self.token_out(x)
-        return x_hat
+        return x_hat, hidden
 
     def reset_hidden(self):
         self.model.reset_hidden()
