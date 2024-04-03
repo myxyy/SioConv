@@ -51,7 +51,6 @@ class SioConvLayer(nn.Module):
         a = a * torch.rsqrt(a_sqr_mag) * torch.sigmoid(torch.log(a_sqr_mag))
 
         if len == 1:
-            #h = torch.einsum("hed,bhd->bhe", torch.inverse(self.mat_v), hidden)
             h = torch.einsum("bhd,bhd->bhd", a.squeeze(1), hidden)
             h += torch.einsum("hed,bhd->bhe", torch.inverse(self.mat_v), x.squeeze(1))
             hidden_next = h
@@ -68,8 +67,6 @@ class SioConvLayer(nn.Module):
             vx = torch.einsum("hed,blhd->blhe", torch.inverse(self.mat_v), x)
             vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, inner_dim)
             vx_roll[:,0,:,:] = hidden
-
-            #h = torch.einsum("hed,blhd->blhe", torch.inverse(self.mat_v), x_roll) # (batch, len, num_head, inner_dim)
             h = torch.einsum("bholm,blho->bmho", c, vx_roll) # (batch, len, num_head, inner_dim)
             h[:,-1,:,:] += vx[:,-1,:,:]
             hidden_next = h[:,-1,:,:]
