@@ -5,7 +5,7 @@ depth: 12
 dim_ff_hidden: 16384
 inner_dim: 32
 num_head: 8
-chunk_size: 256
+chunk_size: 128
 dropout: 0.1
 dtype:
   _target_: hydra.utils.get_object

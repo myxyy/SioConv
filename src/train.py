@@ -39,7 +39,7 @@ def main(cfg):
         del ckpt
     else:
         model = instantiate(cfg.model)
-        model = model(devices=devices, vocab_size=vocab_size)
+        model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         epochs = 0
         steps = 0
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
@@ -55,7 +55,7 @@ def main(cfg):
     print(f"#parameter:{num_parameters}")
 
     model_pipe = nn.Sequential(*model.module_list())
-    model_pipe = Pipe(model_pipe, chunks=cfg.train.batch_size, checkpoint='except_last')
+    model_pipe = Pipe(model_pipe, chunks=cfg.train.batch_size, checkpoint=cfg.train.pipeline_checkpoint)
     model_pipe.train()
 
     def find_tensor_and_transfer(d):
