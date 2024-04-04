@@ -159,6 +159,7 @@ class SioConv(nn.Module):
         dropout: float,
         vocab_size: int,
         devices,
+        out_only_device: bool=True,
         dtype=torch.float,
     ):
         super().__init__()
@@ -175,12 +176,13 @@ class SioConv(nn.Module):
         self.num_parameters_layer_norm_last = sum(p.numel() for p in self.layer_norm_last.parameters())
         self.num_parameters_token_out = sum(p.numel() for p in self.token_out.parameters())
         self.num_parameters = (self.num_parameters_per_block * depth) + self.num_parameters_layer_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out)
+        self.out_only_device = out_only_device
 
         for i, block in enumerate(self.block_list):
             self.block_list[i] = block.to(devices[self.device_index(i)])
 
     def device_index(self, i):
-        return (int)((len(self.devices) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
+        return (int)(((len(self.devices)-(1 if self.out_only_device else 0)) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
 
     def forward(self, x):
         x = self.token_in(x).to(self.dtype)
