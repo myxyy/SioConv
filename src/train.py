@@ -110,7 +110,7 @@ def main(cfg):
                 text, text_next = batch
                 text = text.to(devices[0])
                 text_next = text_next.to(devices[-1])
-                text = nn.functional.one_hot(text.long(), vocab_size).to(dtype)
+                text = text.long()
 
                 text_hat = model_pipe(text).local_value()
 

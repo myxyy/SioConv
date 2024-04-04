@@ -27,7 +27,7 @@ class SioConvLayer(nn.Module):
         self.act = nn.SiLU()
         self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
 
-    #(batch, len, dim) -> (batch, len, dim)
+    #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
     def forward(self, x, hidden):
         batch = x.shape[0]
         len = x.shape[1]
@@ -74,11 +74,6 @@ class SioConvLayer(nn.Module):
         y = self.fc_out_2(y)
         return y.to(dtype), hidden_next
 
-    def reset_hidden(self):
-        self.last_hidden = None
-
-    def set_is_refresh(self, is_refresh):
-        self.is_refresh = is_refresh
 
 class ChunkWiseSioConvLayer(nn.Module):
     def __init__(self, dim: int, inner_dim: int, num_head: int, chunk_size: int, dtype):
@@ -170,12 +165,8 @@ class SioConv(nn.Module):
         self.devices = devices
         self.dtype = dtype
         self.vocab_size = vocab_size
-        self.token_in = nn.Linear(vocab_size, dim, device=devices[0], dtype=dtype)
-        nn.init.normal_(self.token_in.weight, std=vocab_size**-0.5)
-        nn.init.constant_(self.token_in.bias, 0)
+        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        nn.init.normal_(self.token_out.weight, std=dim**-0.5)
-        nn.init.constant_(self.token_out.bias, 0)
         self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=True, bias=True, device=devices[-1], dtype=dtype)
 
@@ -192,7 +183,7 @@ class SioConv(nn.Module):
         return (int)((len(self.devices) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
 
     def forward(self, x):
-        x = self.token_in(x)
+        x = self.token_in(x).to(self.dtype)
         for i, block in enumerate(self.block_list):
             x = x.to(self.devices[self.device_index(i)])
             x = block(x)

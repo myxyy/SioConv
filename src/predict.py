@@ -43,7 +43,7 @@ def main(cfg):
         prompt_beam = prompt.repeat(beam_width, 1)
         while current_len < prompt_len:
             x = prompt_beam[:,current_len:current_len+context_len]
-            x = nn.functional.one_hot(x.long(), vocab_size).to(dtype)
+            x = x.long()
             if (prompt_len - current_len <= context_len):
                 model.set_is_refresh(False)
                 predict_init = model(x) # (1, context_len, vocab_size)
@@ -62,7 +62,7 @@ def main(cfg):
         while current_len < out_length:
             model.set_is_refresh(current_len % context_len == 0)
             x = prompt_beam[:,start:start+context_len]
-            x = nn.functional.one_hot(x.long(), vocab_size).to(dtype)
+            x = x.long()
             predict_beam = model(x).to(devices[0])
             #_, predict_beam_i = predict_beam[:,current_len-1-start,:].reshape(beam_width * vocab_size).topk(beam_width)
             predict_beam_i = torch.multinomial(nn.Softmax(dim=1)(predict_beam[:,current_len-1-start,:]/temperature), 1)
