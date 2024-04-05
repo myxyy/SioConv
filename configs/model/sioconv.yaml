@@ -1,9 +1,9 @@
 _target_: src.model.sioconv.SioConv
 _partial_: True
 dim: 4096
-depth: 12
-dim_ff_hidden: 16384
-inner_dim: 32
+depth: 8
+dim_ff_hidden: 8192
+inner_dim: 128
 num_head: 8
 chunk_size: 128
 dropout: 0.1

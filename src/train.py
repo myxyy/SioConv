@@ -104,7 +104,8 @@ def main(cfg):
                     backup_epochs = epochs
                     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
 
-                model.reset_hidden()
+                if steps % cfg.train.refresh_every_n_steps == 0:
+                    model.reset_hidden()
                 optimizer.zero_grad()
 
                 text, text_next = batch

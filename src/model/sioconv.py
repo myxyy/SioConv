@@ -118,10 +118,10 @@ class SioConvBlock(nn.Module):
         super().__init__()
         self.dtype = dtype 
 
-        self.layer_norm_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
+        self.layer_norm_sc_in = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
         self.sioconv = ChunkWiseSioConvLayer(dim, inner_dim, num_head, chunk_size, dtype)
 
-        self.layer_norm_ffn_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
+        self.layer_norm_ffn_sc_in = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
         self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
 
         self.dropout = nn.Dropout(dropout)
@@ -169,7 +169,7 @@ class SioConv(nn.Module):
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
         self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
-        self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=True, bias=True, device=devices[-1], dtype=dtype)
+        self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=False, bias=False, device=devices[-1], dtype=dtype)
 
         self.num_parameters_token_in = sum(p.numel() for p in self.token_in.parameters())
         self.num_parameters_per_block = sum(p.numel() for p in self.block_list[0].parameters())
