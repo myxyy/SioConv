@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from ..helper import calc_num_parameters
 
 class FFN(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: float, dtype):
@@ -15,17 +16,17 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, inner_dim: int, diag_dim: int, num_head: int, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, diag_dim: int, num_head: int, dtype):
         super().__init__()
         self.dim = dim
         self.inner_dim = inner_dim 
         self.diag_dim = diag_dim
         self.num_head = num_head
-        self.fc_in = nn.Linear(dim, dim)
-        self.fc_x = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_a = nn.Linear(dim, num_head * diag_dim * 2)
-        self.fc_out1 = nn.Linear(num_head * inner_dim * 2, dim)
-        self.fc_out2 = nn.Linear(dim, dim)
+        self.fc_in = nn.Linear(dim, dim_ff_hidden)
+        self.fc_x = nn.Linear(dim_ff_hidden, num_head * inner_dim * 2)
+        self.fc_a = nn.Linear(dim_ff_hidden, num_head * diag_dim * 2)
+        self.fc_out1 = nn.Linear(num_head * inner_dim * 2, dim_ff_hidden)
+        self.fc_out2 = nn.Linear(dim_ff_hidden, dim)
         self.act = nn.SiLU()
         self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, diag_dim, dtype=torch.cfloat))
         self.mat_w = nn.Parameter(torch.randn(num_head, diag_dim, inner_dim, dtype=torch.cfloat))
@@ -41,6 +42,7 @@ class SioConvLayer(nn.Module):
 
         x = x.float()
         x = self.fc_in(x)
+        x_ = x
         x = self.act(x)
         x, a = self.fc_x(x), self.fc_a(x) # (batch, len, num_head * inner_dim * 2)
         x = torch.view_as_complex(x.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
@@ -73,15 +75,16 @@ class SioConvLayer(nn.Module):
 
         h = h.view(batch, len, num_head, inner_dim)
         y = self.fc_out1(torch.view_as_real(h).reshape(batch, len, num_head*inner_dim*2))
+        y += x_
         y = self.act(y)
         y = self.fc_out2(y)
         return y.to(dtype), hidden_next
 
 
 class ChunkWiseSioConvLayer(nn.Module):
-    def __init__(self, dim: int, inner_dim: int, diag_dim: int, num_head: int, chunk_size: int, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, diag_dim: int, num_head: int, chunk_size: int, dtype):
         super().__init__()
-        self.sioconv = SioConvLayer(dim, inner_dim, diag_dim, num_head, dtype)
+        self.sioconv = SioConvLayer(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, dtype)
         self.last_hidden = None
         self.last_hidden_init = nn.Parameter(torch.randn(num_head, diag_dim, dtype=torch.cfloat))
         self.is_refresh = True
@@ -123,10 +126,10 @@ class SioConvBlock(nn.Module):
         self.dtype = dtype 
 
         self.layer_norm_sioconv = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
-        self.sioconv = ChunkWiseSioConvLayer(dim, inner_dim, diag_dim, num_head, chunk_size, dtype)
+        self.sioconv = ChunkWiseSioConvLayer(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dtype)
 
-        self.layer_norm_ffn = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
-        self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
+        #self.layer_norm_ffn = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
+        #self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -137,11 +140,11 @@ class SioConvBlock(nn.Module):
         x = self.dropout(x)
         x = x + x_
 
-        x_ = x
-        x = self.layer_norm_ffn(x)
-        x = self.ffn_sc(x)
-        x = self.dropout(x)
-        x = x + x_
+        #x_ = x
+        #x = self.layer_norm_ffn(x)
+        #x = self.ffn_sc(x)
+        #x = self.dropout(x)
+        #x = x + x_
 
         return x
 
@@ -176,10 +179,10 @@ class SioConv(nn.Module):
         self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=False, bias=False, device=devices[-1], dtype=dtype)
 
-        self.num_parameters_token_in = sum(p.numel() for p in self.token_in.parameters())
-        self.num_parameters_per_block = sum(p.numel() for p in self.block_list[0].parameters())
-        self.num_parameters_layer_norm_last = sum(p.numel() for p in self.layer_norm_last.parameters())
-        self.num_parameters_token_out = sum(p.numel() for p in self.token_out.parameters())
+        self.num_parameters_token_in = calc_num_parameters(self.token_in)
+        self.num_parameters_per_block = calc_num_parameters(self.block_list[0])
+        self.num_parameters_layer_norm_last = calc_num_parameters(self.layer_norm_last)
+        self.num_parameters_token_out = calc_num_parameters(self.token_out)
         self.num_parameters = (self.num_parameters_per_block * depth) + self.num_parameters_layer_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out)
         self.out_only_device = out_only_device
 

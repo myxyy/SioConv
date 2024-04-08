@@ -10,6 +10,7 @@ from hydra.utils import instantiate
 from tqdm import tqdm
 from torch.distributed.pipeline.sync import Pipe
 import copy
+from helper import calc_num_parameters
 
 @hydra.main(version_base=None, config_path="../configs/", config_name="config")
 def main(cfg):
@@ -51,7 +52,7 @@ def main(cfg):
 
     torch.cuda.empty_cache()
 
-    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_parameters = calc_num_parameters(model)
     print(f"#parameter:{num_parameters}")
 
     model_pipe = nn.Sequential(*model.module_list())

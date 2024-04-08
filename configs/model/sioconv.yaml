@@ -3,7 +3,7 @@ _partial_: True
 dim: 4096
 depth: 8
 dim_ff_hidden: 8192
-inner_dim: 512
+inner_dim: 256
 diag_dim: 64
 num_head: 8
 chunk_size: 128

@@ -5,6 +5,7 @@ import pytorch_lightning as pl
 import numpy as np
 import hydra
 from hydra.utils import instantiate
+from helper import calc_num_parameters
 
 np.set_printoptions(threshold=np.inf)
 
@@ -26,7 +27,7 @@ def main(cfg):
     del ckpt
     torch.cuda.empty_cache()
 
-    num_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_parameters = calc_num_parameters(model)
     print(f"#parameter:{num_parameters}")
 
     def predict(prompt):
