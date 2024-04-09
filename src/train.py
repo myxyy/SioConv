@@ -135,8 +135,8 @@ def main(cfg):
  
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
-                pbar.set_postfix({"loss":loss.item(), "lr":scheduler.get_lr()})
+                scheduler.step(steps)
+                pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
                 steps += 1
             steps = 0
             epochs += 1

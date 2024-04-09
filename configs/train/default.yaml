@@ -21,8 +21,12 @@ optimizer:
   lr: 1e-4
 
 scheduler:
-  _target_: src.schedular.ExponentialDecayWithWarmup
+  _target_: timm.scheduler.cosine_lr.CosineLRScheduler
   _partial_: true
-  warmup_epochs: 256
-  warmup_scale: 1e2
-  annealing_steps: 2048
+  warmup_t: 256
+  warmup_lr_init: 1e-5
+  cycle_limit: 65536
+  t_initial: 256
+  warmup_prefix: true
+  cycle_mul: 2.0
+  lr_min: 1e-5
