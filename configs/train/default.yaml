@@ -6,7 +6,6 @@ backup_every_n_steps: 500
 refresh_every_n_steps: 8
 text: "text/text.txt"
 weight: "weight/weight.ckpt"
-lr: 1e-5
 pipeline_checkpoint: 'never'
 #pipeline_checkpoint: 'except_last'
 out_only_device: false
@@ -15,3 +14,15 @@ devices:
   - 'cuda:1'
   - 'cuda:2'
   - 'cuda:3'
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 1e-4
+
+scheduler:
+  _target_: src.schedular.ExponentialDecayWithWarmup
+  _partial_: true
+  warmup_epochs: 256
+  warmup_scale: 1e2
+  annealing_steps: 2048

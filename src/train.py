@@ -30,20 +30,27 @@ def main(cfg):
 
     if ckpt_path is not None:
         ckpt = torch.load(ckpt_path)
-        model = instantiate(ckpt['model'])
+        model = instantiate(ckpt['model_config'])
         model = model(devices=devices, vocab_size=vocab_size)
-        model.load_state_dict(ckpt['state_dict'])
+        model.load_state_dict(ckpt['model'])
         epochs = ckpt['epochs']
         steps = ckpt['steps']
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
+        optimizer = instantiate(ckpt['optimizer_config'])
+        optimizer = optimizer(params=model.parameters())
         optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler = instantiate(ckpt['scheduler_config'])
+        scheduler = scheduler(optimizer=optimizer)
+        scheduler.load_state_dict(ckpt['scheduler'])
         del ckpt
     else:
         model = instantiate(cfg.model)
         model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         epochs = 0
         steps = 0
-        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr)
+        optimizer = instantiate(cfg.train.optimizer)
+        optimizer = optimizer(params=model.parameters())
+        scheduler = instantiate(cfg.train.scheduler)
+        scheduler = scheduler(optimizer=optimizer)
 
     total_steps = len(dataset) // cfg.train.batch_size
     print(f'loaded. steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
@@ -66,25 +73,32 @@ def main(cfg):
     backup_steps = steps
     backup_epochs = epochs
     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
+    backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
 
     def save():
         print(f'saving... steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
         torch.save({
-            'state_dict': model.state_dict(),
+            'model': model.state_dict(),
             'steps': steps,
             'epochs': epochs,
             'optimizer': optimizer.state_dict(),
-            'model': cfg.model,
+            'scheduler': scheduler.state_dict(),
+            'model_config': cfg.model,
+            'optimizer_config': cfg.train.optimizer,
+            'scheduler_config': cfg.train.scheduler,
         }, cfg.train.weight)
 
     def save_backup():
         print(f'saving... steps:{backup_steps}/{total_steps} epochs:{backup_epochs}/{cfg.train.max_epochs}')
         torch.save({
-            'state_dict': backup_model_state_dict,
+            'model': backup_model_state_dict,
             'steps': backup_steps,
             'epochs': backup_epochs,
             'optimizer': backup_optimizer_state_dict,
-            'model': cfg.model,
+            'scheduler': backup_scheduler_state_dict,
+            'model_config': cfg.model,
+            'optimizer_config': cfg.train.optimizer,
+            'scheduler_config': cfg.train.scheduler,
         }, cfg.train.weight)
 
     model.set_is_refresh(True)
@@ -104,6 +118,7 @@ def main(cfg):
                     backup_steps = steps
                     backup_epochs = epochs
                     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
+                    backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
 
                 if steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
@@ -120,7 +135,8 @@ def main(cfg):
  
                 loss.backward()
                 optimizer.step()
-                pbar.set_postfix(loss=loss.item())
+                scheduler.step()
+                pbar.set_postfix({"loss":loss.item(), "lr":scheduler.get_lr()})
                 steps += 1
             steps = 0
             epochs += 1
