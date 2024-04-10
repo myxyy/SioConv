@@ -18,15 +18,15 @@ devices:
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
-  lr: 1e-4
+  lr: 5e-5
 
 scheduler:
   _target_: timm.scheduler.cosine_lr.CosineLRScheduler
   _partial_: true
-  warmup_t: 256
+  warmup_t: 300
   warmup_lr_init: 1e-5
   cycle_limit: 65536
-  t_initial: 256
-  warmup_prefix: true
-  cycle_mul: 2.0
-  lr_min: 1e-5
+  t_initial: 2000
+  warmup_prefix: false
+  cycle_mul: 1.0
+  lr_min: 5e-6
