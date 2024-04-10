@@ -63,7 +63,7 @@ class SioConvLayer(nn.Module):
             a_ln_tri_fft = torch.fft.fft(a_ln_tri, n=len*2, dim=4)
             ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
             a_ln_tri_conv = torch.fft.ifft(torch.einsum("bhdlm,m->bhdlm", a_ln_tri_fft, ones_fft)).narrow(4,0,len) # (batch, num_head, diag_dim, len, len)
-            c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, inner_dim, len, len)
+            c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, diag_dim, len, len)
 
             vx = torch.einsum("hed,blhd->blhe", self.mat_w, x) # (batch, len, num_head, diag_dim)
             vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, diag_dim)
