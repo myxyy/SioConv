@@ -53,9 +53,9 @@ class SioConvLayer(nn.Module):
 
         if len == 1:
             h = torch.einsum("bhd,bhd->bhd", a.squeeze(1), hidden)
-            h += torch.einsum("hed,bhd->bhe", self.mat_w, x.squeeze(1))
+            h += torch.einsum("hdi,bhi->bhd", self.mat_w, x.squeeze(1))
             hidden_next = h
-            h = torch.einsum("hed,bhd->bhe", self.mat_v, h)
+            h = torch.einsum("hid,bhd->bhi", self.mat_v, h)
             h = h.unsqueeze(1)
         else:
             a_ln = torch.log(a)
@@ -65,13 +65,13 @@ class SioConvLayer(nn.Module):
             a_ln_tri_conv = torch.fft.ifft(torch.einsum("bhdlm,m->bhdlm", a_ln_tri_fft, ones_fft)).narrow(4,0,len) # (batch, num_head, diag_dim, len, len)
             c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, diag_dim, len, len)
 
-            vx = torch.einsum("hed,blhd->blhe", self.mat_w, x) # (batch, len, num_head, diag_dim)
+            vx = torch.einsum("hdi,blhi->blhd", self.mat_w, x) # (batch, len, num_head, diag_dim)
             vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, diag_dim)
             vx_roll[:,0,:,:] = hidden
-            h = torch.einsum("bholm,blho->bmho", c, vx_roll) # (batch, len, num_head, diag_dim)
+            h = torch.einsum("bhdlm,blhd->bmhd", c, vx_roll) # (batch, len, num_head, diag_dim)
             h[:,-1,:,:] += vx[:,-1,:,:]
             hidden_next = h[:,-1,:,:]
-            h = torch.einsum("hno,blho->blhn", self.mat_v, h) # (batch, len, num_head, inner_dim)
+            h = torch.einsum("hid,blhd->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
 
         h = h.view(batch, len, num_head, inner_dim)
         y = self.fc_out1(torch.view_as_real(h).reshape(batch, len, num_head*inner_dim*2))
