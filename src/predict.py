@@ -14,10 +14,10 @@ def main(cfg):
     devices = cfg.predict.devices
     ckpt = torch.load(cfg.predict.weight)
     tokenizer = instantiate(cfg.tokenizer)
-    model = instantiate(ckpt['model'])
+    model = instantiate(ckpt['model_config'])
     vocab_size = tokenizer.vocab_size
     model = model(devices=devices, vocab_size=vocab_size)
-    model.load_state_dict(ckpt['state_dict'])
+    model.load_state_dict(ckpt['model'])
     model.eval()
     context_len = cfg.predict.context_len
     out_length = cfg.predict.max_len
