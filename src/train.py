@@ -31,7 +31,7 @@ def main(cfg):
     if ckpt_path is not None:
         ckpt = torch.load(ckpt_path)
         model = instantiate(ckpt['model_config'])
-        model = model(devices=devices, vocab_size=vocab_size)
+        model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         model.load_state_dict(ckpt['model'])
         epochs = ckpt['epochs']
         steps = ckpt['steps']
