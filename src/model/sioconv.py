@@ -30,6 +30,7 @@ class SioConvLayer(nn.Module):
         self.act = nn.SiLU()
         self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, diag_dim, dtype=torch.cfloat))
         self.mat_w = nn.Parameter(torch.randn(num_head, diag_dim, inner_dim, dtype=torch.cfloat))
+        self.layer_norm = nn.LayerNorm(inner_dim*2, dtype=dtype)
 
     #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
     def forward(self, x, hidden):
@@ -73,8 +74,10 @@ class SioConvLayer(nn.Module):
             hidden_next = h[:,-1,:,:]
             h = torch.einsum("hid,blhd->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
 
-        h = h.view(batch, len, num_head, inner_dim)
-        y = self.fc_out1(torch.view_as_real(h).reshape(batch, len, num_head*inner_dim*2))
+        h = torch.view_as_real(h).reshape(batch, len, num_head, inner_dim*2)
+        h = self.layer_norm(h)
+        h = h.reshape(batch, len, num_head*inner_dim*2)
+        y = self.fc_out1(h)
         y += x_
         y = self.act(y)
         y = self.fc_out2(y)
@@ -125,7 +128,7 @@ class SioConvBlock(nn.Module):
         super().__init__()
         self.dtype = dtype 
 
-        self.layer_norm_sioconv = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
+        self.layer_norm_sioconv = nn.LayerNorm(dim, dtype=dtype)
         self.sioconv = ChunkWiseSioConvLayer(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dtype)
 
         #self.layer_norm_ffn = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
@@ -177,7 +180,7 @@ class SioConv(nn.Module):
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
         self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
-        self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=False, bias=False, device=devices[-1], dtype=dtype)
+        self.layer_norm_last = nn.LayerNorm(dim, device=devices[-1], dtype=dtype)
 
         self.num_parameters_token_in = calc_num_parameters(self.token_in)
         self.num_parameters_per_block = calc_num_parameters(self.block_list[0])
