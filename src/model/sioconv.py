@@ -173,7 +173,7 @@ class SioConv(nn.Module):
         self.devices = devices
         self.dtype = dtype
         self.vocab_size = vocab_size
-        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], dtype=dtype)
+        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
         self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, device=devices[-1], dtype=dtype)
