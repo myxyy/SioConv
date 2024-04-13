@@ -1,5 +1,5 @@
 length: 1024
-batch_size: 4
+batch_size: 6
 max_epochs: 1
 save_every_n_steps: 5000
 backup_every_n_steps: 500
@@ -18,15 +18,20 @@ devices:
 optimizer:
   _target_: torch.optim.AdamW
   _partial_: true
-  lr: 5e-5
+  lr: 1e-4
+
+#scheduler:
+  #_target_: timm.scheduler.cosine_lr.CosineLRScheduler
+  #_partial_: true
+  #warmup_t: 300
+  #warmup_lr_init: 1e-5
+  #cycle_limit: 65536
+  #t_initial: 2000
+  #warmup_prefix: false
+  #cycle_mul: 1.0
+  #lr_min: 5e-6
 
 scheduler:
-  _target_: timm.scheduler.cosine_lr.CosineLRScheduler
-  _partial_: true
-  warmup_t: 300
-  warmup_lr_init: 1e-5
-  cycle_limit: 65536
-  t_initial: 2000
-  warmup_prefix: false
-  cycle_mul: 1.0
-  lr_min: 5e-6
+  _target_: src.scheduler.InvPropDecay
+  _partial_: True
+  decay_time: 1000

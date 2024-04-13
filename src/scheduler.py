@@ -22,3 +22,17 @@ class ExponentialDecayWithWarmup(_LRScheduler):
             self.last_epoch / self.warmup_epochs
         ) * self.warmup_scale)
         return [base_lr * scale for base_lr in self.base_lrs]
+
+class InvPropDecay(_LRScheduler):
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        decay_time: float,
+        last_epoch: int = -1,
+    ):
+        self.decay_time = decay_time
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        scale = 1 / (self.last_epoch / self.decay_time + 1)
+        return [base_lr * scale for base_lr in self.base_lrs]

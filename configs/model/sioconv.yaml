@@ -1,12 +1,11 @@
 _target_: src.model.sioconv.SioConv
 _partial_: True
 dim: 2048
-depth: 18
+depth: 24
 dim_ff_hidden: 4096
 inner_dim: 256
-diag_dim: 64
 num_head: 8
-chunk_size: 64
+chunk_size: 512
 dropout: 0.1
 dtype:
   _target_: hydra.utils.get_object

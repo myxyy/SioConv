@@ -16,20 +16,19 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, diag_dim: int, num_head: int, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, num_head: int, dtype):
         super().__init__()
         self.dim = dim
         self.inner_dim = inner_dim 
-        self.diag_dim = diag_dim
         self.num_head = num_head
         self.fc_in = nn.Linear(dim, dim_ff_hidden)
         self.fc_x = nn.Linear(dim_ff_hidden, num_head * inner_dim * 2)
-        self.fc_a = nn.Linear(dim_ff_hidden, num_head * diag_dim * 2)
+        self.fc_a = nn.Linear(dim_ff_hidden, num_head * 2)
         self.fc_out1 = nn.Linear(num_head * inner_dim * 2, dim_ff_hidden)
         self.fc_out2 = nn.Linear(dim_ff_hidden, dim)
         self.act = nn.SiLU()
-        self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, diag_dim, dtype=torch.cfloat))
-        self.mat_w = nn.Parameter(torch.randn(num_head, diag_dim, inner_dim, dtype=torch.cfloat))
+        self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
+        self.mat_w = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
         self.layer_norm = nn.LayerNorm(inner_dim*2, dtype=dtype)
 
     #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
@@ -37,7 +36,6 @@ class SioConvLayer(nn.Module):
         batch = x.shape[0]
         len = x.shape[1]
         inner_dim = self.inner_dim
-        diag_dim = self.diag_dim
         num_head = self.num_head
         dtype = x.dtype
 
@@ -47,32 +45,32 @@ class SioConvLayer(nn.Module):
         x = self.act(x)
         x, a = self.fc_x(x), self.fc_a(x) # (batch, len, num_head * inner_dim * 2)
         x = torch.view_as_complex(x.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        a = torch.view_as_complex(a.view(batch, len, num_head, diag_dim, 2))  # (batch, len, num_head, diag_dim)
+        a = torch.view_as_complex(a.view(batch, len, num_head, 2))  # (batch, len, num_head)
 
         a_sqr_mag = a.real * a.real + a.imag * a.imag
         a = a * torch.rsqrt(a_sqr_mag) * torch.sigmoid(torch.log(a_sqr_mag))
 
         if len == 1:
-            h = torch.einsum("bhd,bhd->bhd", a.squeeze(1), hidden)
+            h = torch.einsum("bh,bhd->bhd", a.squeeze(1), hidden)
             h += torch.einsum("hdi,bhi->bhd", self.mat_w, x.squeeze(1))
             hidden_next = h
             h = torch.einsum("hid,bhd->bhi", self.mat_v, h)
             h = h.unsqueeze(1)
         else:
             a_ln = torch.log(a)
-            a_ln_tri = a_ln.permute(0,2,3,1).unsqueeze(3).expand(batch, num_head, diag_dim, len, len).triu() # (batch, num_head, diag_dim, len, len)
-            a_ln_tri_fft = torch.fft.fft(a_ln_tri, n=len*2, dim=4)
+            a_ln_tri = a_ln.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).triu() # (batch, num_head, len, len)
+            a_ln_tri_fft = torch.fft.fft(a_ln_tri, n=len*2)
             ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
-            a_ln_tri_conv = torch.fft.ifft(torch.einsum("bhdlm,m->bhdlm", a_ln_tri_fft, ones_fft)).narrow(4,0,len) # (batch, num_head, diag_dim, len, len)
-            c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, diag_dim, len, len)
+            a_ln_tri_conv = torch.fft.ifft(torch.einsum("bhlm,m->bhlm", a_ln_tri_fft, ones_fft)).narrow(3,0,len) # (batch, num_head, len, len)
+            c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, len, len)
 
-            vx = torch.einsum("hdi,blhi->blhd", self.mat_w, x) # (batch, len, num_head, diag_dim)
-            vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, diag_dim)
+            vx = torch.einsum("hji,blhi->blhj", self.mat_w, x) # (batch, len, num_head, inner_dim)
+            vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, inner_dim)
             vx_roll[:,0,:,:] = hidden
-            h = torch.einsum("bhdlm,blhd->bmhd", c, vx_roll) # (batch, len, num_head, diag_dim)
+            h = torch.einsum("bhlm,blhi->bmhi", c, vx_roll) # (batch, len, num_head, inner_dim)
             h[:,-1,:,:] += vx[:,-1,:,:]
             hidden_next = h[:,-1,:,:]
-            h = torch.einsum("hid,blhd->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
+            h = torch.einsum("hij,blhj->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
 
         h = torch.view_as_real(h).reshape(batch, len, num_head, inner_dim*2)
         h = self.layer_norm(h)
@@ -85,24 +83,23 @@ class SioConvLayer(nn.Module):
 
 
 class ChunkWiseSioConvLayer(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, diag_dim: int, num_head: int, chunk_size: int, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, num_head: int, chunk_size: int, dtype):
         super().__init__()
-        self.sioconv = SioConvLayer(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, dtype)
+        self.sioconv = SioConvLayer(dim, dim_ff_hidden, inner_dim, num_head, dtype)
         self.last_hidden = None
-        self.last_hidden_init = nn.Parameter(torch.randn(num_head, diag_dim, dtype=torch.cfloat))
+        self.last_hidden_init = nn.Parameter(torch.randn(num_head, inner_dim, dtype=torch.cfloat))
         self.is_refresh = True
         self.inner_dim = inner_dim 
-        self.diag_dim = diag_dim 
         self.num_head = num_head
         self.chunk_size = chunk_size
 
     def forward(self, x):
         batch = x.shape[0]
-        diag_dim = self.diag_dim
+        inner_dim = self.inner_dim
         num_head = self.num_head
 
         if self.last_hidden is None:
-            hidden = self.last_hidden_init.unsqueeze(0).expand(batch, num_head, diag_dim)
+            hidden = self.last_hidden_init.unsqueeze(0).expand(batch, num_head, inner_dim)
         else:
             hidden = self.last_hidden.detach()
 
@@ -124,12 +121,12 @@ class ChunkWiseSioConvLayer(nn.Module):
         self.is_refresh = is_refresh
 
 class SioConvBlock(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, diag_dim: int, num_head: int, chunk_size:int, dropout: float, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, num_head: int, chunk_size:int, dropout: float, dtype):
         super().__init__()
         self.dtype = dtype 
 
         self.layer_norm_sioconv = nn.LayerNorm(dim, dtype=dtype)
-        self.sioconv = ChunkWiseSioConvLayer(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dtype)
+        self.sioconv = ChunkWiseSioConvLayer(dim, dim_ff_hidden, inner_dim, num_head, chunk_size, dtype)
 
         #self.layer_norm_ffn = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
         #self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
@@ -164,7 +161,6 @@ class SioConv(nn.Module):
         dim: int,
         dim_ff_hidden: int,
         inner_dim: int,
-        diag_dim: int,
         num_head: int,
         chunk_size: int,
         dropout: float,
@@ -179,7 +175,7 @@ class SioConv(nn.Module):
         self.vocab_size = vocab_size
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, diag_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
+        self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, inner_dim, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, device=devices[-1], dtype=dtype)
 
         self.num_parameters_token_in = calc_num_parameters(self.token_in)
