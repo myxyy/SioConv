@@ -52,7 +52,7 @@ def main(cfg):
         scheduler = instantiate(cfg.train.scheduler)
         scheduler = scheduler(optimizer=optimizer)
 
-    total_steps = len(dataset) // cfg.train.batch_size
+    total_steps = len(dataset) // cfg.train.batch_size_per_acc
     print(f'loaded. steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
 
     dtype = model.dtype
@@ -63,7 +63,7 @@ def main(cfg):
     print(f"#parameter:{num_parameters}")
 
     model_pipe = nn.Sequential(*model.module_list())
-    model_pipe = Pipe(model_pipe, chunks=cfg.train.batch_size, checkpoint=cfg.train.pipeline_checkpoint)
+    model_pipe = Pipe(model_pipe, chunks=cfg.train.batch_size_per_acc, checkpoint=cfg.train.pipeline_checkpoint)
     model_pipe.train()
 
     def find_tensor_and_transfer(d):
@@ -106,7 +106,7 @@ def main(cfg):
     try:
         for _ in range(cfg.train.max_epochs - epochs):
 
-            dataloader = torch.utils.data.DataLoader([dataset[i] for i in range(cfg.train.batch_size * steps, len(dataset))], batch_size=cfg.train.batch_size, shuffle=False, num_workers=os.cpu_count(), pin_memory=True, drop_last=True)
+            dataloader = torch.utils.data.DataLoader([dataset[i] for i in range(cfg.train.batch_size_per_acc * steps, len(dataset))], batch_size=cfg.train.batch_size_per_acc, shuffle=False, num_workers=os.cpu_count(), pin_memory=True, drop_last=True)
 
             pbar = tqdm(dataloader, initial=steps, total=total_steps)
             for batch in pbar:
@@ -122,7 +122,6 @@ def main(cfg):
 
                 if steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
-                optimizer.zero_grad()
 
                 text, text_next = batch
                 text = text.to(devices[0])
@@ -133,9 +132,13 @@ def main(cfg):
 
                 loss = nn.CrossEntropyLoss()(text_hat.view(-1,vocab_size), text_next.view(-1).long())
  
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
+                loss_norm_acc = loss / cfg.train.num_acc
+                loss_norm_acc.backward()
+
+                if steps % cfg.train.num_acc == 0:
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
                 pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
                 steps += 1
             steps = 0
