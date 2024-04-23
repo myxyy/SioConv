@@ -25,11 +25,13 @@ class SioConvLayer(nn.Module):
         self.a_scale_max = a_scale_max
         self.fc_x = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_a = nn.Linear(dim, num_head * 2)
+        self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
         self.act = nn.SiLU()
-        self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
-        self.mat_w = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
-        self.group_norm = nn.LayerNorm(inner_dim*2)
+        self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat)*inner_dim**(-0.5))
+        self.mat_w = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat)*inner_dim**(-0.5))
+        self.group_norm = nn.GroupNorm(num_head, num_head)
+        self.log_scale = nn.Parameter(torch.zeros(num_head))
 
     #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
     def forward(self, x, hidden):
@@ -40,11 +42,11 @@ class SioConvLayer(nn.Module):
         dtype = x.dtype
 
         x = x.float()
-        x, a = self.fc_x(x), self.fc_a(x) # (batch, len, num_head * inner_dim * 2)
+        x, a, g = self.fc_x(x), self.fc_a(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
         x = torch.view_as_complex(x.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
         a = torch.view_as_complex(a.view(batch, len, num_head, 2))  # (batch, len, num_head)
 
-        scale = self.a_scale_min * torch.exp(np.log(self.a_scale_max/self.a_scale_min)/(num_head-1)*torch.arange(num_head, device=x.device))
+        scale = torch.exp(self.log_scale)
         a = a * scale
         a = a / (1 + a.abs())
 
@@ -70,10 +72,10 @@ class SioConvLayer(nn.Module):
             hidden_next = h[:,-1,:,:]
             h = torch.einsum("hij,blhj->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
 
-        h = torch.view_as_real(h).reshape(batch, len, num_head, inner_dim*2)
+        h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
-        h = h.reshape(batch, len, num_head*inner_dim*2)
-        y = self.fc_y(h)
+        h = h.view(batch, len, num_head*inner_dim*2)
+        y = self.fc_y(h * self.act(g))
         return y.to(dtype), hidden_next
 
 
@@ -184,7 +186,7 @@ class SioConv(nn.Module):
             self.block_list[i] = block.to(devices[self.device_index(i)])
 
     def device_index(self, i):
-        return (int)(((len(self.devices)-(1 if self.out_only_device else 0)) * ((i+1) * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
+        return (int)(((len(self.devices)-(1 if self.out_only_device else 0)) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
 
     def forward(self, x):
         x = self.token_in(x).to(self.dtype)
