@@ -125,7 +125,7 @@ class SioConvBlock(nn.Module):
         self.layer_norm_sioconv = nn.LayerNorm(dim, dtype=dtype)
         self.sioconv = ChunkWiseSioConvLayer(dim, inner_dim, num_head, chunk_size, dtype)
 
-        self.layer_norm_ffn = nn.LayerNorm(dim, elementwise_affine=False, bias=False, dtype=dtype)
+        self.layer_norm_ffn = nn.LayerNorm(dim, dtype=dtype)
         self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
 
         self.dropout = nn.Dropout(dropout)
