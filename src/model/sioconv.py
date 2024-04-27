@@ -27,7 +27,7 @@ class SioConvLayer(nn.Module):
         self.fc_a_angle = nn.Linear(dim, num_head)
         self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
-        self.p_angle = nn.Parameter(torch.randn(num_head, inner_dim))
+        self.p_angle = nn.Parameter((1e-4 ** (torch.arange(inner_dim)/inner_dim)).unsqueeze(0).expand(num_head, inner_dim), requires_grad=False)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
         self.a_scale = 1 - 1e-5
