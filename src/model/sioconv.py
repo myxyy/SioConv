@@ -23,15 +23,15 @@ class SioConvLayer(nn.Module):
         self.num_head = num_head
         self.a_scale_min = a_scale_min
         self.a_scale_max = a_scale_max
-        self.fc_x = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_a = nn.Linear(dim, num_head * 2)
+        self.fc_q = nn.Linear(dim, num_head * inner_dim * 2)
+        self.fc_k = nn.Linear(dim, num_head * inner_dim * 2)
+        self.fc_a = nn.Linear(dim, num_head)
         self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
+        self.p = nn.Parameter(torch.randn(num_head, inner_dim))
         self.act = nn.SiLU()
-        self.mat_v = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat)*inner_dim**(-0.5))
-        self.mat_w = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat)*inner_dim**(-0.5))
         self.group_norm = nn.GroupNorm(num_head, num_head)
-        self.log_scale = nn.Parameter(torch.zeros(num_head))
+        self.a_scale = 1 - 1e-5
 
     #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
     def forward(self, x, hidden):
@@ -42,35 +42,39 @@ class SioConvLayer(nn.Module):
         dtype = x.dtype
 
         x = x.float()
-        x, a, g = self.fc_x(x), self.fc_a(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
-        x = torch.view_as_complex(x.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        a = torch.view_as_complex(a.view(batch, len, num_head, 2))  # (batch, len, num_head)
+        q, k, g = self.fc_q(x), self.fc_k(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
+        a = self.fc_a(x) # (batch, len, num_head)
+        q = torch.view_as_complex(q.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
+        k = torch.view_as_complex(k.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
 
-        scale = torch.exp(self.log_scale)
-        a = a * scale
-        a = a / (1 + a.abs())
+        a = torch.exp(a * 1j) * self.a_scale
+
+        len_arange = torch.arange(len, device=x.device)
+        p = torch.exp(self.p * 1j) # (num_head, inner_dim)
+        q = q * torch.pow(p.unsqueeze(0),  len_arange.unsqueeze(1).unsqueeze(2)).unsqueeze(0)
+        k = k * torch.pow(p.unsqueeze(0), -len_arange.unsqueeze(1).unsqueeze(2)).unsqueeze(0)
 
         if len == 1:
-            h = torch.einsum("bh,bhd->bhd", a.squeeze(1), hidden)
-            h += torch.einsum("hdi,bhi->bhd", self.mat_w, x.squeeze(1))
+            h = torch.einsum("bh,hi,bhi->bhi", a.squeeze(1), p, hidden)
+            h += k.squeeze(1)
             hidden_next = h
-            h = torch.einsum("hid,bhd->bhi", self.mat_v, h)
+            h = q.squeeze(1) * h
             h = h.unsqueeze(1)
         else:
-            a_ln = torch.log(a)
-            a_ln_tri = a_ln.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).triu() # (batch, num_head, len, len)
-            a_ln_tri_fft = torch.fft.fft(a_ln_tri, n=len*2)
+            ln_a = torch.log(a)
+            ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).triu() # (batch, num_head, len, len)
+            ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2)
             ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
-            a_ln_tri_conv = torch.fft.ifft(torch.einsum("bhlm,m->bhlm", a_ln_tri_fft, ones_fft)).narrow(3,0,len) # (batch, num_head, len, len)
-            c = torch.exp(a_ln_tri_conv).triu(diagonal=-1) # (batch, num_head, len, len)
+            ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,m->bhlm", ln_a_tri_fft, ones_fft)).narrow(3,0,len) # (batch, num_head, len, len)
+            ln_c = ln_a_tri_conv
+            c = torch.exp(ln_c).triu(diagonal=-1) # (batch, num_head, len, len)
 
-            vx = torch.einsum("hji,blhi->blhj", self.mat_w, x) # (batch, len, num_head, inner_dim)
-            vx_roll = vx.roll(1, dims=1) # (batch, len, num_head, inner_dim)
-            vx_roll[:,0,:,:] = hidden
-            h = torch.einsum("bhlm,blhi->bmhi", c, vx_roll) # (batch, len, num_head, inner_dim)
-            h[:,-1,:,:] += vx[:,-1,:,:]
+            k_roll = k.roll(1, dims=1) # (batch, len, num_head, inner_dim)
+            k_roll[:,0,:,:] = torch.einsum("bhi,hi->bhi", hidden, p)
+            h = torch.einsum("bhlm,blhi->bmhi", c, k_roll) # (batch, len, num_head, inner_dim)
+            h[:,-1,:,:] += k[:,-1,:,:]
             hidden_next = h[:,-1,:,:]
-            h = torch.einsum("hij,blhj->blhi", self.mat_v, h) # (batch, len, num_head, inner_dim)
+            h = q * h # (batch, len, num_head, inner_dim)
 
         h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
