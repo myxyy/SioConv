@@ -25,6 +25,7 @@ class SioConvLayer(nn.Module):
         self.a_scale_max = a_scale_max
         self.fc_q = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_k = nn.Linear(dim, num_head * inner_dim * 2)
+        self.fc_v = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_a = nn.Linear(dim, num_head)
         self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
@@ -33,7 +34,7 @@ class SioConvLayer(nn.Module):
         self.group_norm = nn.GroupNorm(num_head, num_head)
         self.a_scale = 1 - 1e-5
 
-    #(batch, len, dim),(batch, num_head, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim)
+    #(batch, len, dim),(batch, num_head, inner_dim, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim, inner_dim)
     def forward(self, x, hidden):
         batch = x.shape[0]
         len = x.shape[1]
@@ -42,11 +43,11 @@ class SioConvLayer(nn.Module):
         dtype = x.dtype
 
         x = x.float()
-        q, k, g = self.fc_q(x), self.fc_k(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
-        a = self.fc_a(x) # (batch, len, num_head)
+        q, k, v, g = self.fc_q(x), self.fc_k(x), self.fc_v(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
         q = torch.view_as_complex(q.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
         k = torch.view_as_complex(k.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-
+        v = torch.view_as_complex(v.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
+        a = self.fc_a(x) # (batch, len, num_head)
         a = torch.exp(a * 1j) * self.a_scale
 
         len_arange = torch.arange(len, device=x.device)
@@ -54,27 +55,18 @@ class SioConvLayer(nn.Module):
         q = q * torch.pow(p.unsqueeze(0),  len_arange.unsqueeze(1).unsqueeze(2)).unsqueeze(0)
         k = k * torch.pow(p.unsqueeze(0), -len_arange.unsqueeze(1).unsqueeze(2)).unsqueeze(0)
 
-        if len == 1:
-            h = torch.einsum("bh,hi,bhi->bhi", a.squeeze(1), p, hidden)
-            h += k.squeeze(1)
-            hidden_next = h
-            h = q.squeeze(1) * h
-            h = h.unsqueeze(1)
-        else:
-            ln_a = torch.log(a)
-            ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).triu() # (batch, num_head, len, len)
-            ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2)
-            ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
-            ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,m->bhlm", ln_a_tri_fft, ones_fft)).narrow(3,0,len) # (batch, num_head, len, len)
-            ln_c = ln_a_tri_conv
-            c = torch.exp(ln_c).triu(diagonal=-1) # (batch, num_head, len, len)
-
-            k_roll = k.roll(1, dims=1) # (batch, len, num_head, inner_dim)
-            k_roll[:,0,:,:] = torch.einsum("bhi,hi->bhi", hidden, p)
-            h = torch.einsum("bhlm,blhi->bmhi", c, k_roll) # (batch, len, num_head, inner_dim)
-            h[:,-1,:,:] += k[:,-1,:,:]
-            hidden_next = h[:,-1,:,:]
-            h = q * h # (batch, len, num_head, inner_dim)
+        ln_a = torch.log(a) # (batch, len, num_head)
+        ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
+        ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
+        ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
+        ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,l->bhlm", ln_a_tri_fft, ones_fft), dim=2).narrow(2,0,len) # (batch, num_head, len, len)
+        c = torch.exp(ln_a_tri_conv).triu(diagonal=-1) # (batch, num_head, len, len)
+        ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
+        ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len)
+        d = torch.exp(ln_a_conv)
+        qk = torch.einsum("blhi,bmhi->bhlm", q, k) # (batch, num_head, len, len)
+        h = torch.einsum("bhlm,bmhi->blhi", qk * c, v) + torch.einsum("blhi,blh,bhij->blhj", q, d, hidden)
+        hidden_next = torch.einsum("blhi,bhl,blhj,hi->bhij", k, c[:,:,-1,:], v, torch.pow(p, len-1)) + torch.einsum("bhij,hi", torch.exp(ln_a.sum()) * hidden, torch.pow(p, len))
 
         h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
@@ -88,7 +80,7 @@ class ChunkWiseSioConvLayer(nn.Module):
         super().__init__()
         self.sioconv = SioConvLayer(dim, inner_dim, num_head, dtype)
         self.last_hidden = None
-        self.last_hidden_init = nn.Parameter(torch.randn(num_head, inner_dim, dtype=torch.cfloat))
+        self.last_hidden_init = nn.Parameter(torch.randn(num_head, inner_dim, inner_dim, dtype=torch.cfloat))
         self.is_refresh = True
         self.inner_dim = inner_dim 
         self.num_head = num_head
@@ -100,7 +92,7 @@ class ChunkWiseSioConvLayer(nn.Module):
         num_head = self.num_head
 
         if self.last_hidden is None:
-            hidden = self.last_hidden_init.unsqueeze(0).expand(batch, num_head, inner_dim)
+            hidden = self.last_hidden_init.unsqueeze(0).expand(batch, num_head, inner_dim, inner_dim)
         else:
             hidden = self.last_hidden.detach()
 
