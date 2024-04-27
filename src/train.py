@@ -103,6 +103,8 @@ def main(cfg):
 
     model.set_is_refresh(True)
 
+    last_steps = steps
+
     try:
         for _ in range(cfg.train.max_epochs - epochs):
 
@@ -146,7 +148,8 @@ def main(cfg):
             save()
     except KeyboardInterrupt:
         print(f'KeyboardInterrupted')
-        save_backup()
+        if steps - last_steps > cfg.train.backup_every_n_steps == 0:
+            save_backup()
 
 
 if __name__ == '__main__':
