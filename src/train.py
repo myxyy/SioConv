@@ -148,7 +148,7 @@ def main(cfg):
             save()
     except KeyboardInterrupt:
         print(f'KeyboardInterrupted')
-        if steps - last_steps > cfg.train.backup_every_n_steps == 0:
+        if steps - last_steps > cfg.train.backup_every_n_steps:
             save_backup()
 
 
