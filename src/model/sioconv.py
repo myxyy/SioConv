@@ -64,7 +64,7 @@ class SioConvLayer(nn.Module):
         d = torch.exp(ln_a_conv)
         qk = torch.einsum("blhi,bmhi->bhlm", q, k) # (batch, num_head, len, len)
         h = torch.einsum("bhlm,bmhi->blhi", qk * c, v) + torch.einsum("blhi,blh,bhij->blhj", q, d, hidden)
-        hidden_next = torch.einsum("blhi,bhl,blhj,hi->bhij", k, c[:,:,-1,:], v, torch.exp(self.p_angle * (len-1) * 1j)) + torch.einsum("bhij,hi", torch.exp(ln_a.sum()) * hidden, torch.exp(self.p_angle * len * 1j))
+        hidden_next = torch.einsum("blhi,bhl,blhj,hi->bhij", k, c[:,:,-1,:], v, torch.exp(self.p_angle * (len-1) * 1j)) + torch.einsum("bh,bhij,hi->bhij", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(self.p_angle * len * 1j))
 
         h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
