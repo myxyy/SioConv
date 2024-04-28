@@ -47,7 +47,7 @@ class SioConvLayer(nn.Module):
         v = torch.view_as_complex(v.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
         a_angle = self.fc_a_angle(x) # (batch, len, num_head)
         a = torch.exp(a_angle * 1j) * self.a_scale
-        p_angle = self.p_angle
+        p_angle = self.p_angle # (num_head, inner_dim)
 
         len_arange = torch.arange(len, device=x.device)
         p_pow_len = torch.exp(torch.einsum("hi,l->lhi", p_angle, len_arange) * 1j) # (len, num_head, inner_dim)
@@ -67,8 +67,8 @@ class SioConvLayer(nn.Module):
         ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
         ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
         d = torch.exp(ln_a_conv) # (batch, len, num_head)
-        p = torch.exp(p_angle * 1j)
-        h_cross_chunk = torch.einsum("blhi,blh,bhij,hi->blhj", q, d, hidden, p)
+        p = torch.exp(p_angle * 1j) # (num_head, inner_dim)
+        h_cross_chunk = torch.einsum("blhi,blh,bhij->blhj", q, d, torch.einsum("bhij,hi->bhij", hidden, p))
 
         h = h_inner_chunk +  h_cross_chunk
 
