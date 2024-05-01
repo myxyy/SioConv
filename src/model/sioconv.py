@@ -16,21 +16,21 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, inner_dim: int, num_head: int, dtype, a_scale_min: float=0.125, a_scale_max: float=4):
+    def __init__(self, dim: int, inner_dim: int, num_head: int, dtype):
         super().__init__()
         self.dim = dim
         self.inner_dim = inner_dim 
         self.num_head = num_head
-        self.fc_q = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_k = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_v = nn.Linear(dim, num_head * inner_dim * 2)
+        self.fc_q = nn.Linear(dim, num_head * inner_dim, dtype=torch.cfloat)
+        self.fc_k = nn.Linear(dim, num_head * inner_dim, dtype=torch.cfloat)
+        self.fc_v = nn.Linear(dim, num_head * inner_dim, dtype=torch.cfloat)
         self.fc_a_angle = nn.Linear(dim, num_head)
-        self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
-        self.angle_base = 1e-4
+        self.fc_a_ln_minus_ln_abs = nn.Linear(dim, num_head)
+        self.fc_g = nn.Linear(dim, num_head * inner_dim)
+        self.fc_y = nn.Linear(num_head * inner_dim, dim)
+        self.angle_base = 1e-5
         self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*inner_dim)/(num_head*inner_dim))).view(num_head, inner_dim), requires_grad=False)
-        self.ln_minus_ln_a_default_scale = nn.Parameter(torch.zeros(num_head), requires_grad=False)
-        self.ln_a_scale = nn.Parameter(self.angle_base ** ((torch.arange(num_head) + 0.5)/num_head), requires_grad=False)
+        self.ln_a_scale = nn.Parameter(self.angle_base ** ((torch.arange(num_head) + 1)/num_head), requires_grad=False)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
 
@@ -46,18 +46,20 @@ class SioConvLayer(nn.Module):
         p_angle = self.p_angle # (num_head, inner_dim)
 
         x = x.float()
-        q, k, v, g = self.fc_q(x), self.fc_k(x), self.fc_v(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
-        q = torch.view_as_complex(q.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        k = torch.view_as_complex(k.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        v = torch.view_as_complex(v.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
+        x_cfloat = x.cfloat()
+        q, k, v, g = self.fc_q(x_cfloat), self.fc_k(x_cfloat), self.fc_v(x_cfloat), self.fc_g(x) # (batch, len, num_head * inner_dim)
+        q = q.view(batch, len, num_head, inner_dim)  # (batch, len, num_head, inner_dim)
+        k = k.view(batch, len, num_head, inner_dim)  # (batch, len, num_head, inner_dim)
+        v = v.view(batch, len, num_head, inner_dim)  # (batch, len, num_head, inner_dim)
         a_angle = self.fc_a_angle(x) # (batch, len, num_head)
+        a_ln_minus_ln_abs = self.fc_a_ln_minus_ln_abs(x) # (batch, len, num_head)
+        ln_a = a_angle * 1j - torch.exp(a_ln_minus_ln_abs) # (batch, len, num_head)
 
         len_arange = torch.arange(len, device=x.device)
         p_pow_len = torch.exp(torch.einsum("hi,l->lhi", p_angle, len_arange) * 1j) # (len, num_head, inner_dim)
         q = torch.einsum("blhi,lhi->blhi", q, p_pow_len)
         k = torch.einsum("blhi,lhi->blhi", k, torch.conj(p_pow_len))
 
-        ln_a = a_angle * 1j - torch.exp(self.ln_minus_ln_a_default_scale) # (batch, len, num_head)
         ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
         ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
@@ -81,9 +83,9 @@ class SioConvLayer(nn.Module):
         hidden_next_cross_chunk = torch.einsum("bh,bhij,hi->bhij", torch.exp(torch.einsum("bh,h->bh", ln_a.sum(dim=1), ln_a_scale)), hidden, torch.exp(p_angle * len * 1j))
         hidden_next = hidden_next_inner_chunk + hidden_next_cross_chunk
 
-        h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
+        h = h.real.reshape(batch*len, num_head, inner_dim)
         h = self.group_norm(h)
-        h = h.view(batch, len, num_head*inner_dim*2)
+        h = h.view(batch, len, num_head*inner_dim)
         y = self.fc_y(h * self.act(g))
         return y.to(dtype), hidden_next
 
