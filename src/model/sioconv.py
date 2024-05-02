@@ -21,12 +21,11 @@ class SioConvLayer(nn.Module):
         self.dim = dim
         self.inner_dim = inner_dim 
         self.num_head = num_head
-        self.fc_q = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_k = nn.Linear(dim, num_head * inner_dim * 2)
-        self.fc_v = nn.Linear(dim, num_head * inner_dim * 2)
+        self.fc_qkv = nn.Linear(dim, num_head * inner_dim * 3 * 2)
+        self.fc_in = nn.Linear(dim, dim)
+        self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_a_angle = nn.Linear(dim, num_head)
         self.fc_ln_minus_ln_a_abs = nn.Linear(dim, num_head)
-        self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
         self.angle_base = 1e-4
         self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*inner_dim)/(num_head*inner_dim))).view(num_head, inner_dim), requires_grad=False)
@@ -46,12 +45,12 @@ class SioConvLayer(nn.Module):
         p_angle = self.p_angle # (num_head, inner_dim)
 
         x = x.float()
-        q, k, v, g = self.fc_q(x), self.fc_k(x), self.fc_v(x), self.fc_g(x) # (batch, len, num_head * inner_dim * 2)
-        q = torch.view_as_complex(q.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        k = torch.view_as_complex(k.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
-        v = torch.view_as_complex(v.view(batch, len, num_head, inner_dim, 2))  # (batch, len, num_head, inner_dim)
+        xin = self.act(self.fc_in(x))
+        qkv = torch.view_as_complex(self.fc_qkv(xin).view(batch, len, num_head, inner_dim, 3, 2))
+        qkv = qkv / (1 + qkv.abs())
+        q, k, v = qkv[:,:,:,:,0], qkv[:,:,:,:,1], qkv[:,:,:,:,2] # (batch, len, num_head, inner_dim)
 
-        a_angle = self.fc_a_angle(x) # (batch, len, num_head)
+        a_angle = self.fc_a_angle(xin) # (batch, len, num_head)
         ln_minus_ln_a_abs = self.fc_ln_minus_ln_a_abs(x) # (batch, len, num_head)
         ln_a = a_angle * 1j - torch.exp(ln_minus_ln_a_abs) # (batch, len, num_head)
 
@@ -86,6 +85,7 @@ class SioConvLayer(nn.Module):
         h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
         h = h.view(batch, len, num_head*inner_dim*2)
+        g = self.fc_g(xin)
         y = self.fc_y(h * self.act(g))
         return y.to(dtype), hidden_next
 
