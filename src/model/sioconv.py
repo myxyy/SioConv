@@ -63,7 +63,7 @@ class SioConvLayer(nn.Module):
         if len == 1:
             c = torch.ones(batch, num_head, 1, 1, device=x.device)
         else:
-            ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
+            ln_a_tri = ln_a.permute(0,2,1).unsqueeze(3).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
             ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
             ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,l->bhlm", ln_a_tri_fft, ones_fft), dim=2).narrow(2,0,len) # (batch, num_head, len, len)
             c = torch.exp(ln_a_tri_conv).tril() # (batch, num_head, len, len)
