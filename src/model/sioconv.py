@@ -22,7 +22,6 @@ class SioConvLayer(nn.Module):
         self.inner_dim = inner_dim 
         self.num_head = num_head
         self.fc_qkv = nn.Linear(dim, num_head * inner_dim * 3 * 2)
-        self.fc_in = nn.Linear(dim, dim)
         self.fc_g = nn.Linear(dim, num_head * inner_dim * 2)
         self.fc_a_angle = nn.Linear(dim, num_head)
         self.fc_ln_minus_ln_a_abs = nn.Linear(dim, num_head)
@@ -30,6 +29,7 @@ class SioConvLayer(nn.Module):
         self.angle_base = 1e-4
         self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*inner_dim)/(num_head*inner_dim))).view(num_head, inner_dim), requires_grad=False)
         self.ln_a_scale = nn.Parameter(self.angle_base ** (torch.arange(num_head)/num_head), requires_grad=False)
+        self.fc_p_angle_diff_scale_qk = nn.Linear(dim, num_head*2)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
 
@@ -44,19 +44,23 @@ class SioConvLayer(nn.Module):
         p_angle = self.p_angle # (num_head, inner_dim)
 
         x = x.float()
-        xin = self.act(self.fc_in(x))
-        qkv = torch.view_as_complex(self.fc_qkv(xin).view(batch, len, num_head, inner_dim, 3, 2))
+        qkv = torch.view_as_complex(self.fc_qkv(x).view(batch, len, num_head, inner_dim, 3, 2))
         qkv = qkv / (1 + qkv.abs())
         q, k, v = qkv[:,:,:,:,0], qkv[:,:,:,:,1], qkv[:,:,:,:,2] # (batch, len, num_head, inner_dim)
 
-        a_angle = self.fc_a_angle(xin) # (batch, len, num_head)
-        ln_minus_ln_a_abs = self.fc_ln_minus_ln_a_abs(x) # (batch, len, num_head)
-        ln_a = torch.einsum("blh,h->blh", a_angle * 1j - torch.exp(ln_minus_ln_a_abs), self.ln_a_scale) # (batch, len, num_head)
+        a_angle = nn.functional.sigmoid(self.fc_a_angle(x)) # (batch, len, num_head)
+        ln_a_abs = - torch.exp(self.fc_ln_minus_ln_a_abs(x)) # (batch, len, num_head)
+        ln_a = torch.einsum("blh,h->blh", a_angle * 1j + ln_a_abs, self.ln_a_scale) # (batch, len, num_head)
 
         len_arange = torch.arange(len, device=x.device)
-        p_pow_len = torch.exp(torch.einsum("hi,l->lhi", p_angle, len_arange) * 1j) # (len, num_head, inner_dim)
-        qp = torch.einsum("blhi,lhi->blhi", q, p_pow_len)
-        kp = torch.einsum("blhi,lhi->blhi", k, torch.conj(p_pow_len))
+
+        p_angle_diff_scale_qk = self.act(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head, 2)) # (len, num_head, 2)
+        p_angle_diff_qk = torch.einsum("blha,h,hi->ablhi", p_angle_diff_scale_qk, 1/self.ln_a_scale, p_angle) # (2, batch, len, num_head, inner_dim)
+        p_pow_len_q = torch.exp((torch.einsum("hi,l->lhi", p_angle,  len_arange).unsqueeze(0) + p_angle_diff_qk[0]) * 1j) # (batch, len, num_head, inner_dim)
+        p_pow_len_k = torch.exp((torch.einsum("hi,l->lhi", p_angle, -len_arange).unsqueeze(0) - p_angle_diff_qk[1]) * 1j) # (batch, len, num_head, inner_dim)
+
+        qp = torch.einsum("blhi,blhi->blhi", q, p_pow_len_q)
+        kp = torch.einsum("blhi,blhi->blhi", k, p_pow_len_k)
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 
@@ -82,15 +86,15 @@ class SioConvLayer(nn.Module):
 
         h = h_inner_chunk +  h_cross_chunk
 
-        p_pow_len_inverse = torch.exp(torch.einsum("hi,l->lhi", p_angle, len - 1 - len_arange) * 1j) # (len, num_head, inner_dim)
-        hidden_next_inner_chunk = torch.einsum("blhi,bhl,lhi,blhj->bhij", k, c[:,:,-1,:], p_pow_len_inverse, v)
+        p_pow_len_inverse_pk = torch.exp((torch.einsum("hi,l->lhi", p_angle, len - 1 - len_arange).unsqueeze(0) - p_angle_diff_qk[1]) * 1j) # (batch, len, num_head, inner_dim)
+        hidden_next_inner_chunk = torch.einsum("blhi,bhl,blhi,blhj->bhij", k, c[:,:,-1,:], p_pow_len_inverse_pk, v)
         hidden_next_cross_chunk = torch.einsum("bh,bhij,hi->bhij", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
         hidden_next = hidden_next_inner_chunk + hidden_next_cross_chunk
 
         h = torch.view_as_real(h).reshape(batch*len, num_head, inner_dim*2)
         h = self.group_norm(h)
         h = h.view(batch, len, num_head*inner_dim*2)
-        g = self.fc_g(xin)
+        g = self.fc_g(x)
         y = self.fc_y(h * self.act(g))
         return y.to(dtype), hidden_next
 
