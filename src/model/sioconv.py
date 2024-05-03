@@ -16,7 +16,7 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, inner_dim: int, num_head: int, dtype, a_scale_min: float=0.125, a_scale_max: float=4):
+    def __init__(self, dim: int, inner_dim: int, num_head: int, dtype):
         super().__init__()
         self.dim = dim
         self.inner_dim = inner_dim 
@@ -26,12 +26,21 @@ class SioConvLayer(nn.Module):
         self.fc_a_angle = nn.Linear(dim, num_head)
         self.fc_ln_minus_ln_a_abs = nn.Linear(dim, num_head)
         self.fc_y = nn.Linear(num_head * inner_dim * 2, dim)
-        self.angle_base = 1e-4
+        self.angle_base = 1/512
         self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*inner_dim)/(num_head*inner_dim))).view(num_head, inner_dim), requires_grad=False)
         self.ln_a_scale = nn.Parameter(self.angle_base ** (torch.arange(num_head)/num_head), requires_grad=False)
         self.fc_p_angle_diff_scale_qk = nn.Linear(dim, num_head*2)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_a_angle.bias)
+        nn.init.xavier_uniform_(self.fc_ln_minus_ln_a_abs.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_ln_minus_ln_a_abs.bias)
+        nn.init.xavier_uniform_(self.fc_p_angle_diff_scale_qk.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_p_angle_diff_scale_qk.bias)
 
     #(batch, len, dim),(batch, num_head, inner_dim, inner_dim) -> (batch, len, dim),(batch, num_head, inner_dim, inner_dim)
     def forward(self, x, hidden):
