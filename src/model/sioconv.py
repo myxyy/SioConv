@@ -59,20 +59,27 @@ class SioConvLayer(nn.Module):
         qp = torch.einsum("blhi,lhi->blhi", q, p_pow_len)
         kp = torch.einsum("blhi,lhi->blhi", k, torch.conj(p_pow_len))
 
-        ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
-        ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
-        ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,l->bhlm", ln_a_tri_fft, ones_fft), dim=2).narrow(2,0,len) # (batch, num_head, len, len)
-        ln_c = torch.einsum("bhlm,h->bhlm", ln_a_tri_conv, ln_a_scale) # (batch, num_head, len, len)
-        c = torch.exp(ln_c).tril() # (batch, num_head, len, len)
+
+        if len == 1:
+            c = torch.ones(batch, num_head, 1, 1, device=x.device)
+        else:
+            ln_a_tri = ln_a.permute(0,2,1).unsqueeze(2).expand(batch, num_head, len, len).tril(-1) # (batch, num_head, len, len)
+            ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
+            ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,l->bhlm", ln_a_tri_fft, ones_fft), dim=2).narrow(2,0,len) # (batch, num_head, len, len)
+            ln_c = torch.einsum("bhlm,h->bhlm", ln_a_tri_conv, ln_a_scale) # (batch, num_head, len, len)
+            c = torch.exp(ln_c).tril() # (batch, num_head, len, len)
 
         qck = torch.einsum("blhi,bmhi->bhlm", qp, kp) * c # (batch, num_head, len, len)
         h_inner_chunk = torch.einsum("bhlm,bmhi->blhi", qck, v)
 
-        ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
-        ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
-        ln_d = torch.einsum("blh,h->blh", ln_a_conv, ln_a_scale) # (batch, len, num_head)
-        d = torch.exp(ln_d) # (batch, len, num_head)
+        if len == 1:
+            d = torch.exp(torch.einsum("blh,h->blh", ln_a, ln_a_scale))
+        else:
+            ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
+            ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
+            ln_d = torch.einsum("blh,h->blh", ln_a_conv, ln_a_scale) # (batch, len, num_head)
+            d = torch.exp(ln_d) # (batch, len, num_head)
         p = torch.exp(p_angle * 1j) # (num_head, inner_dim)
         h_cross_chunk = torch.einsum("blhi,bhij->blhj", torch.einsum("blhi,blh->blhi", qp, d), torch.einsum("bhij,hi->bhij", hidden, p))
 
