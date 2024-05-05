@@ -212,7 +212,7 @@ class SioConv(nn.Module):
         self.out_only_device = out_only_device
 
         for i, block in enumerate(self.block_list):
-            self.block_list[i] = block.to(devices[self.device_index(i)])
+            block.to(devices[self.device_index(i)])
 
     def device_index(self, i):
         return (int)(((len(self.devices)-(1 if self.out_only_device else 0)) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
