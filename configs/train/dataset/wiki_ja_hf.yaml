@@ -1,0 +1,11 @@
+_target_: src.text_loader.HFDataset
+dataset:
+  _target_: datasets.load_dataset
+  path: "graelo/wikipedia"
+  name: "20230901.ja"
+  cache_dir: "datasets"
+  split: "train"
+column: "text"
+size: ${train.length}
+tokenizer: ${tokenizer}
+tokenized_file_name: ${tokenized_text_dir_path}/wiki_ja_hf.npy
