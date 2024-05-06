@@ -7,7 +7,7 @@ from tqdm import tqdm
 import os
 
 class TextDataset(Dataset):
-    def __init__(self, path: str, size: int, tokenizer, transforms=None, tokenized_text_dir_path=None) -> None:
+    def __init__(self, path: str, size: int, tokenizer, transforms=None, tokenized_file_name=None) -> None:
         super().__init__()
         self.size = size
         self.transforms = transforms
@@ -15,11 +15,10 @@ class TextDataset(Dataset):
         print('loading...')
 
         filename = path.split('/')[-1].split('.')[0]
-        if tokenized_text_dir_path is None:
+        if tokenized_file_name is None:
             tokenized_text = None
         else:
-            tokenized_text_path = tokenized_text_dir_path + '/' + filename + '.npy'
-            tokenized_text = np.load(tokenized_text_path) if os.path.isfile(tokenized_text_path) else None
+            tokenized_text = np.load(tokenized_file_name) if os.path.isfile(tokenized_file_name) else None
         
         if tokenized_text is None:
             text_raw = open(path, 'r', encoding='utf-8').read()
@@ -31,7 +30,7 @@ class TextDataset(Dataset):
                 chunk_list.append(tokenizer.encode(text_raw[i*chunk_size:(i+1)*chunk_size].lower()))
             print('merging...')
             self.text = np.array([token for chunk in chunk_list for token in chunk])
-            np.save(tokenized_text_path, self.text)
+            np.save(tokenized_file_name, self.text)
         else:
             self.text = tokenized_text
 

@@ -10,3 +10,4 @@ outputs/
 poetry.lock
 sp/*.model
 src/test.py
+datasets/

@@ -20,7 +20,8 @@ def main(cfg):
     transforms = torchvision.transforms.Compose([])
     tokenizer = instantiate(cfg.tokenizer)
     vocab_size = tokenizer.vocab_size
-    dataset = TextDataset(cfg.train.text, cfg.train.length, tokenizer, transforms, tokenized_text_dir_path=cfg.tokenized_text_dir_path)
+    #dataset = TextDataset(cfg.train.text, cfg.train.length, tokenizer, transforms, tokenized_text_dir_path=cfg.tokenized_text_dir_path)
+    dataset = instantiate(cfg.train.dataset)
     ckpt_path = cfg.train.weight
     ckpt_path = ckpt_path if os.path.isfile(ckpt_path) else None
     #trainer = pl.Trainer(devices=1, accelerator='gpu', max_epochs=cfg.train.max_epochs, log_every_n_steps=cfg.train.log_every_n_steps, logger=[TensorBoardLogger('./')])

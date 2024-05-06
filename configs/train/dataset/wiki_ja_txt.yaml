@@ -1,0 +1,5 @@
+_target_: src.text_loader.TextDataset
+path:  "text/wiki.txt"
+size: ${train.length}
+tokenizer: ${tokenizer}
+tokenized_file_name: ${tokenized_text_dir_path}/wiki_ja_txt.npy
