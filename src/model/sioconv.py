@@ -146,6 +146,13 @@ class ChunkWiseSioConvLayer(nn.Module):
     def set_is_refresh(self, is_refresh):
         self.is_refresh = is_refresh
 
+    def get_hidden(self):
+        return self.last_hidden
+
+    def set_hidden(self, hidden):
+        self.last_hidden = hidden
+        
+
 class SioConvBlock(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: int, inner_dim: int, num_head: int, chunk_size:int, dropout: float, dtype):
         super().__init__()
@@ -179,6 +186,12 @@ class SioConvBlock(nn.Module):
 
     def set_is_refresh(self, is_refresh):
         self.sioconv.set_is_refresh(is_refresh)
+    
+    def get_hidden(self):
+        return self.sioconv.get_hidden()
+
+    def set_hidden(self, hidden):
+        self.sioconv.set_hidden(hidden)
 
 class SioConv(nn.Module):
     def __init__(
@@ -234,6 +247,19 @@ class SioConv(nn.Module):
     def set_is_refresh(self, is_refresh):
         for block in self.block_list:
             block.set_is_refresh(is_refresh)
+
+    def get_hidden(self):
+        hidden_list = []
+        for block in self.block_list:
+            hidden = block.get_hidden()
+            if hidden is None:
+                return None
+            hidden_list.append(hidden.cpu())
+        return torch.stack(hidden_list, dim=1).detach()
+
+    def set_hidden(self, hidden_stack):
+        for i, block in enumerate(self.block_list):
+            block.set_hidden(hidden_stack[:,i].to(self.devices[self.device_index(i)]))
 
     def module_list(self):
         blistlist = []

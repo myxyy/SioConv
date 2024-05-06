@@ -42,6 +42,7 @@ def main(cfg):
         scheduler = instantiate(ckpt['scheduler_config'])
         scheduler = scheduler(optimizer=optimizer)
         scheduler.load_state_dict(ckpt['scheduler'])
+        model.set_hidden(ckpt['hidden'])
         del ckpt
     else:
         model = instantiate(cfg.model)
@@ -75,6 +76,7 @@ def main(cfg):
     backup_epochs = epochs
     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
     backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
+    backup_hidden = copy.deepcopy(find_tensor_and_transfer(model.get_hidden()))
 
     def save():
         print(f'saving... steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
@@ -87,6 +89,7 @@ def main(cfg):
             'model_config': cfg.model,
             'optimizer_config': cfg.train.optimizer,
             'scheduler_config': cfg.train.scheduler,
+            'hidden': model.get_hidden(),
         }, cfg.train.weight)
 
     def save_backup():
@@ -100,6 +103,7 @@ def main(cfg):
             'model_config': cfg.model,
             'optimizer_config': cfg.train.optimizer,
             'scheduler_config': cfg.train.scheduler,
+            'hidden': backup_hidden,
         }, cfg.train.weight)
 
     model.set_is_refresh(True)
@@ -122,8 +126,9 @@ def main(cfg):
                     backup_epochs = epochs
                     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
                     backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
+                    backup_hidden = copy.deepcopy(find_tensor_and_transfer(model.get_hidden()))
 
-                if steps % cfg.train.refresh_every_n_steps == 0:
+                if cfg.train.refresh_every_n_steps is not None and steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
 
                 text, text_next = batch

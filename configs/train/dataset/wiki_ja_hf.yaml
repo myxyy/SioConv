@@ -5,6 +5,7 @@ dataset:
   name: "20230901.ja"
   cache_dir: "datasets"
   split: "train"
+  trust_remote_code: true
 column: "text"
 size: ${train.length}
 tokenizer: ${tokenizer}

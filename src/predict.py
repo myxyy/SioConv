@@ -18,6 +18,7 @@ def main(cfg):
     vocab_size = tokenizer.vocab_size
     model = model(devices=devices, vocab_size=vocab_size)
     model.load_state_dict(ckpt['model'])
+    model.set_hidden(ckpt['hidden'])
     model.eval()
     context_len = cfg.predict.context_len
     out_length = cfg.predict.max_len
@@ -117,7 +118,7 @@ def main(cfg):
 
     while True:
         prompt = input('prompt:')
-        predict(prompt)
+        predict(tokenizer.bos_token + prompt)
         print('\n')
 
 if __name__ == '__main__':
