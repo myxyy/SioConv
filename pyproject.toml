@@ -21,6 +21,7 @@ tensorboard = "^2.15.0"
 sentencepiece = "^0.1.99"
 transformers = "^4.38.2"
 datasets = "^2.19.0"
+einops = "^0.8.0"
 
 [[tool.poetry.source]]
 name = "torch_cu118"
