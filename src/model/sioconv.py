@@ -60,13 +60,13 @@ class SioConvLayer(nn.Module):
         qkv = qkv / (1 + qkv.abs())
         q, k, v = qkv[:,:,:,:,0], qkv[:,:,:,:,1], qkv[:,:,:,:,2] # (batch, len, num_head, inner_dim)
 
-        a_angle = self.act(self.fc_a_angle(x)) # (batch, len, num_head)
+        a_angle = nn.functional.tanh(self.fc_a_angle(x)) # (batch, len, num_head)
         ln_a_abs = - torch.exp(self.fc_ln_minus_ln_a_abs(x)) # (batch, len, num_head)
-        ln_a = torch.einsum("blh,h->blh", a_angle * self.p_angle_scale * 1j + ln_a_abs, self.p_angle.view(num_head, inner_dim)[:,0]) # (batch, len, num_head)
+        ln_a = torch.einsum("blh,h->blh", a_angle * 1j + ln_a_abs, self.p_angle.view(num_head, inner_dim)[:,0]) # (batch, len, num_head)
 
         len_arange = torch.arange(len, device=x.device)
 
-        p_angle_diff_scale_qk = self.act(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head)) # (batch, len, num_head)
+        p_angle_diff_scale_qk = -self.act(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head)) # (batch, len, num_head)
         p_angle_diff_qk = torch.einsum("blh,h,hi->blhi", p_angle_diff_scale_qk, self.p_angle_scale, p_angle) # (batch, len, num_head, inner_dim)
         p_angle_diff_q = p_angle_diff_qk * self.p_angle_diff_q_mask
         p_angle_diff_k = p_angle_diff_qk * self.p_angle_diff_k_mask
