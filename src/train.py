@@ -34,15 +34,22 @@ def main(cfg):
         model = instantiate(ckpt['model_config'])
         model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         model.load_state_dict(ckpt['model'])
-        epochs = ckpt['epochs']
-        steps = ckpt['steps']
+        if cfg.train.reset_steps:
+            epochs = 0
+            steps = 0
+        else:
+            epochs = ckpt['epochs']
+            steps = ckpt['steps']
         optimizer = instantiate(ckpt['optimizer_config'])
         optimizer = optimizer(params=model.parameters())
-        optimizer.load_state_dict(ckpt['optimizer'])
+        if not cfg.train.reset_steps:
+            optimizer.load_state_dict(ckpt['optimizer'])
         scheduler = instantiate(ckpt['scheduler_config'])
         scheduler = scheduler(optimizer=optimizer)
-        scheduler.load_state_dict(ckpt['scheduler'])
-        model.set_hidden(ckpt['hidden'])
+        if not cfg.train.reset_steps:
+            scheduler.load_state_dict(ckpt['scheduler'])
+        if not cfg.train.reset_steps:
+            model.set_hidden(ckpt['hidden'])
         del ckpt
     else:
         model = instantiate(cfg.model)
