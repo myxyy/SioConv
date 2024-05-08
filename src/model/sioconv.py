@@ -66,7 +66,7 @@ class SioConvLayer(nn.Module):
 
         len_arange = torch.arange(len, device=x.device)
 
-        p_angle_diff_scale_qk = -self.act(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head)) # (batch, len, num_head)
+        p_angle_diff_scale_qk = - nn.functional.sigmoid(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head)) # (batch, len, num_head)
         p_angle_diff_qk = torch.einsum("blh,h,hi->blhi", p_angle_diff_scale_qk, self.p_angle_scale, p_angle) # (batch, len, num_head, inner_dim)
         p_angle_diff_q = p_angle_diff_qk * self.p_angle_diff_q_mask
         p_angle_diff_k = p_angle_diff_qk * self.p_angle_diff_k_mask
