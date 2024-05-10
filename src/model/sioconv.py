@@ -25,10 +25,10 @@ class SioConvLayer(nn.Module):
         self.num_head = num_head
         self.fc_qk = nn.Linear(dim, num_head * dim_qk * 2 * 2)
         self.fc_v = nn.Linear(dim, num_head * dim_v * 2)
-        self.fc_g = nn.Linear(dim, num_head * dim_v)
+        self.fc_g = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_a_angle = nn.Linear(dim, num_head)
         self.fc_ln_minus_ln_a_abs = nn.Linear(dim, num_head)
-        self.fc_y = nn.Linear(num_head * dim_v, dim)
+        self.fc_y = nn.Linear(num_head * dim_v * 2, dim)
         self.angle_base = 1e-4
         self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*dim_qk)/(num_head*dim_qk))).view(num_head, dim_qk), requires_grad=False)
         self.p_angle_scale = nn.Parameter(torch.exp(torch.linspace(np.log(angle_scale_start), np.log(angle_scale_end), num_head)), requires_grad=False)
@@ -108,9 +108,9 @@ class SioConvLayer(nn.Module):
         hidden_next_cross_chunk = torch.einsum("bh,bhiv,hi->bhiv", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
         hidden_next = hidden_next_inner_chunk + hidden_next_cross_chunk
 
-        h = h.real.reshape(batch*len, num_head, dim_v)
+        h = torch.view_as_real(h.reshape(batch*len, num_head, dim_v))
         h = self.group_norm(h)
-        h = h.view(batch, len, num_head*dim_v)
+        h = h.view(batch, len, num_head*dim_v*2)
         g = self.fc_g(x)
         y = self.fc_y(h * self.act(g))
         return y.to(dtype), hidden_next
