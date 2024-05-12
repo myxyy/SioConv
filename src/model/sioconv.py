@@ -17,35 +17,29 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, dtype, angle_scale_start=8, angle_scale_end=1024):
+    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, dtype, a_scale_start: float=8, a_scale_end: float=1024):
         super().__init__()
         self.dim = dim
         self.dim_qk = dim_qk 
         self.dim_v = dim_v
         self.num_head = num_head
-        self.fc_qk = nn.Linear(dim, num_head * dim_qk * 2 * 2)
+        self.fc_qk_angle = nn.Linear(dim, num_head * dim_qk * 2)
         self.fc_v = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_g = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_a_angle = nn.Linear(dim, num_head)
-        self.fc_ln_minus_ln_a_abs = nn.Linear(dim, num_head)
+        self.ln_a_scale = nn.Parameter(-torch.exp(torch.linspace(np.log(1/a_scale_start), np.log(1/a_scale_end), num_head)), requires_grad=False)
         self.fc_y = nn.Linear(num_head * dim_v * 2, dim)
         self.angle_base = 1e-4
-        self.p_angle = nn.Parameter((self.angle_base ** (torch.arange(num_head*dim_qk)/(num_head*dim_qk))).view(num_head, dim_qk), requires_grad=False)
-        self.p_angle_scale = nn.Parameter(torch.exp(torch.linspace(np.log(angle_scale_start), np.log(angle_scale_end), num_head)), requires_grad=False)
-        self.fc_p_angle_diff_scale_qk = nn.Linear(dim, num_head)
+        self.p_angle = nn.Parameter(self.angle_base ** torch.linspace(0, 1, dim_qk), requires_grad=False)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
-        self.p_angle_diff_q_mask = nn.Parameter(einops.repeat(torch.Tensor([1,0]), "a -> h a", h=dim_qk//2).reshape(dim_qk), requires_grad=False)
-        self.p_angle_diff_k_mask = nn.Parameter(einops.repeat(torch.Tensor([0,1]), "a -> h a", h=dim_qk//2).reshape(dim_qk), requires_grad=False)
         self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-2)
         nn.init.zeros_(self.fc_a_angle.bias)
-        nn.init.xavier_uniform_(self.fc_ln_minus_ln_a_abs.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_ln_minus_ln_a_abs.bias)
-        nn.init.xavier_uniform_(self.fc_p_angle_diff_scale_qk.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_p_angle_diff_scale_qk.bias)
+        nn.init.xavier_uniform_(self.fc_qk_angle.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_qk_angle.bias)
 
     #(batch, len, dim),(batch, num_head, dim_qk, dim_v) -> (batch, len, dim),(batch, num_head, dim_qk, dim_v)
     def forward(self, x, hidden):
@@ -63,27 +57,20 @@ class SioConvLayer(nn.Module):
         v = torch.view_as_complex(self.fc_v(x).view(batch, len, num_head, dim_v, 2)) # (batch, len, num_head, dim_v)
         v = v / (1 + v.abs()) # (batch, len, num_head, dim_v)
 
-        qk = torch.view_as_complex(self.fc_qk(x).view(batch, len, num_head, dim_qk, 2, 2)) 
-        qk = qk / (1 + qk.abs())
-        q = torch.exp(qk[:,:,:,:,0])
-        k = torch.exp(qk[:,:,:,:,1])
+        qk_angle = nn.functional.tanh(self.fc_qk_angle(x).view(batch, len, num_head, dim_qk, 2))
+        q = torch.exp(qk_angle[:,:,:,:,0] * 1j)
+        k = torch.exp(qk_angle[:,:,:,:,1] * 1j)
 
         a_angle = nn.functional.tanh(self.fc_a_angle(x)) # (batch, len, num_head)
-        ln_a_abs = - torch.exp(self.fc_ln_minus_ln_a_abs(x)) # (batch, len, num_head)
-        ln_a = torch.einsum("blh,h->blh", a_angle * 1j + ln_a_abs, self.p_angle.view(num_head, dim_qk)[:,0]) # (batch, len, num_head)
+        ln_a = a_angle * 1j + self.ln_a_scale # (batch, len, num_head)
 
         len_arange = torch.arange(len, device=x.device)
 
-        p_angle_diff_scale_qk = nn.functional.tanh(self.fc_p_angle_diff_scale_qk(x).view(batch, len, num_head)) # (batch, len, num_head)
-        p_angle_diff_qk = torch.einsum("blh,h,hi->blhi", p_angle_diff_scale_qk, self.p_angle_scale, p_angle) # (batch, len, num_head, dim_qk)
-        p_angle_diff_q = p_angle_diff_qk * self.p_angle_diff_q_mask
-        p_angle_diff_k = p_angle_diff_qk * self.p_angle_diff_k_mask
+        p_pow_len_q = torch.exp(torch.einsum("i,l->li", p_angle,  len_arange) * 1j) # (len, dim_qk)
+        p_pow_len_k = torch.exp(torch.einsum("i,l->li", p_angle, -len_arange) * 1j) # (len, dim_qk)
 
-        p_pow_len_q = torch.exp((torch.einsum("hi,l->lhi", p_angle,  len_arange).unsqueeze(0) + p_angle_diff_q) * 1j) # (batch, len, num_head, dim_qk)
-        p_pow_len_k = torch.exp((torch.einsum("hi,l->lhi", p_angle, -len_arange).unsqueeze(0) + p_angle_diff_k) * 1j) # (batch, len, num_head, dim_qk)
-
-        qp = torch.einsum("blhi,blhi->blhi", q, p_pow_len_q)
-        kp = torch.einsum("blhi,blhi->blhi", k, p_pow_len_k)
+        qp = torch.einsum("blhi,li->blhi", q, p_pow_len_q)
+        kp = torch.einsum("blhi,li->blhi", k, p_pow_len_k)
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 
@@ -98,14 +85,14 @@ class SioConvLayer(nn.Module):
         ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
         ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
         d = torch.exp(ln_a_conv) # (batch, len, num_head)
-        p = torch.exp(p_angle * 1j) # (num_head, dim_qk)
-        h_cross_chunk = torch.einsum("blhi,bhiv->blhv", torch.einsum("blhi,blh->blhi", qp, d), torch.einsum("bhiv,hi->bhiv", hidden, p))
+        p = torch.exp(p_angle * 1j) # (dim_qk)
+        h_cross_chunk = torch.einsum("blhi,bhiv->blhv", torch.einsum("blhi,blh->blhi", qp, d), torch.einsum("bhiv,i->bhiv", hidden, p))
 
         h = h_inner_chunk +  h_cross_chunk
 
-        p_pow_len_inverse_pk = torch.exp((torch.einsum("hi,l->lhi", p_angle, len - 1 - len_arange).unsqueeze(0) + p_angle_diff_k) * 1j) # (batch, len, num_head, dim_qk)
-        hidden_next_inner_chunk = torch.einsum("blhi,bhl,blhi,blhv->bhiv", k, c[:,:,-1,:], p_pow_len_inverse_pk, v)
-        hidden_next_cross_chunk = torch.einsum("bh,bhiv,hi->bhiv", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
+        p_pow_len_inverse_pk = torch.exp(torch.einsum("i,l->li", p_angle, len - 1 - len_arange) * 1j) # (len, dim_qk)
+        hidden_next_inner_chunk = torch.einsum("blhi,bhl,li,blhv->bhiv", k, c[:,:,-1,:], p_pow_len_inverse_pk, v)
+        hidden_next_cross_chunk = torch.einsum("bh,bhiv,i->bhiv", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
         hidden_next = hidden_next_inner_chunk + hidden_next_cross_chunk
 
         h = torch.view_as_real(h.reshape(batch*len, num_head, dim_v))

@@ -1,4 +1,4 @@
-length: 512
+length: 1024
 batch_size_per_acc: 4
 num_acc: 100
 max_epochs: 1
