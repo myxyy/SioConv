@@ -23,7 +23,7 @@ class SioConvLayer(nn.Module):
         self.dim_qk = dim_qk 
         self.dim_v = dim_v
         self.num_head = num_head
-        self.fc_qk_angle = nn.Linear(dim, num_head * dim_qk * 2)
+        self.fc_qk = nn.Linear(dim, num_head * dim_qk * 2 * 2)
         self.fc_v = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_g = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_a_angle = nn.Linear(dim, num_head)
@@ -36,10 +36,12 @@ class SioConvLayer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-2)
+        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-3)
         nn.init.zeros_(self.fc_a_angle.bias)
-        nn.init.xavier_uniform_(self.fc_qk_angle.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_qk_angle.bias)
+        nn.init.xavier_uniform_(self.fc_v.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_v.bias)
+        nn.init.xavier_uniform_(self.fc_qk.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_qk.bias)
 
     #(batch, len, dim),(batch, num_head, dim_qk, dim_v) -> (batch, len, dim),(batch, num_head, dim_qk, dim_v)
     def forward(self, x, hidden):
@@ -55,13 +57,12 @@ class SioConvLayer(nn.Module):
         x = x.float()
 
         v = torch.view_as_complex(self.fc_v(x).view(batch, len, num_head, dim_v, 2)) # (batch, len, num_head, dim_v)
-        v = v / (1 + v.abs()) # (batch, len, num_head, dim_v)
 
-        qk_angle = nn.functional.tanh(self.fc_qk_angle(x).view(batch, len, num_head, dim_qk, 2))
-        q = torch.exp(qk_angle[:,:,:,:,0] * 1j)
-        k = torch.exp(qk_angle[:,:,:,:,1] * 1j)
+        qk = torch.view_as_complex(self.fc_qk(x).view(batch, len, num_head, dim_qk, 2, 2)) # (batch, len, num_head, dim_v, 2)
+        q = qk[:,:,:,:,0]
+        k = qk[:,:,:,:,1]
 
-        a_angle = nn.functional.tanh(self.fc_a_angle(x)) # (batch, len, num_head)
+        a_angle = self.fc_a_angle(x) # (batch, len, num_head)
         ln_a = a_angle * 1j + self.ln_a_scale # (batch, len, num_head)
 
         len_arange = torch.arange(len, device=x.device)
