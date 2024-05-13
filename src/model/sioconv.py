@@ -36,12 +36,16 @@ class SioConvLayer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-3)
+        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-4)
         nn.init.zeros_(self.fc_a_angle.bias)
         nn.init.xavier_uniform_(self.fc_v.weight, gain=1e-2)
         nn.init.zeros_(self.fc_v.bias)
         nn.init.xavier_uniform_(self.fc_qk.weight, gain=1e-2)
         nn.init.zeros_(self.fc_qk.bias)
+        nn.init.xavier_uniform_(self.fc_g.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_g.bias)
+        nn.init.xavier_uniform_(self.fc_y.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_y.bias)
 
     #(batch, len, dim),(batch, num_head, dim_qk, dim_v) -> (batch, len, dim),(batch, num_head, dim_qk, dim_v)
     def forward(self, x, hidden):
