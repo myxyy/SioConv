@@ -104,7 +104,7 @@ class SConvBlock(nn.Module):
         return self.spiral_conv.get_hidden()
 
     def set_hidden(self, hidden):
-        self.spiral_conv.set_hidden()
+        self.spiral_conv.set_hidden(hidden)
 
 class SConv(nn.Module):
     def __init__(
