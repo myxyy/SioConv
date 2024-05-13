@@ -5,25 +5,23 @@ import numpy as np
 class FFN(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: float, dtype):
         super().__init__()
-        self.linear_1 = nn.Linear(dim, dim_ff_hidden, bias=True, dtype=dtype)
-        nn.init.normal_(self.linear_1.weight, std=dim**-0.5)
-        nn.init.constant_(self.linear_1.bias, 0)
-        self.linear_2 = nn.Linear(dim_ff_hidden, dim, bias=True, dtype=dtype)
-        nn.init.normal_(self.linear_2.weight, std=dim_ff_hidden**-0.5)
-        nn.init.constant_(self.linear_2.bias, 0)
+        self.fc_1 = nn.Linear(dim, dim_ff_hidden, bias=True, dtype=dtype)
+        self.fc_2 = nn.Linear(dim_ff_hidden, dim, bias=True, dtype=dtype)
         self.act = nn.SiLU()
     def forward(self, x):
-        x = self.linear_1(x)
+        x = self.fc_1(x)
         x = self.act(x)
-        x = self.linear_2(x)
+        x = self.fc_2(x)
         return x
 
 class SConvLayer(nn.Module):
-    def __init__(self, dim: int, dtype):
+    def __init__(self, dim: int, dtype, phazor_scale_start: float=32, phazor_scale_end: float=2048):
         super().__init__()
         self.dim = dim
         self.phazor_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
-        self.phazor = nn.Parameter(torch.exp(2.0j * np.pi * torch.arange(dim) / dim) * torch.abs(torch.randn(dim)))
+        self.phazor_angle = nn.Parameter(torch.randn(dim))
+        self.ln_minus_ln_phazor_abs = nn.Parameter(torch.randn(dim))
+        self.ln_phazor_scale = nn.Parameter(torch.exp(torch.linspace(np.log(1/phazor_scale_start), np.log(1/phazor_scale_end), dim)), requires_grad=False)
         self.last_conv = None # (batch, dim)
         self.last_conv_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
         self.is_refresh = True
@@ -39,8 +37,7 @@ class SConvLayer(nn.Module):
             self.last_conv = self.last_conv_init.unsqueeze(0).expand(batch, self.dim)
         else:
             self.last_conv = self.last_conv.detach()
-        phazor = self.phazor
-        phazor = torch.exp(-phazor.real*phazor.real-phazor.imag*phazor.imag) * torch.exp(1.0j * phazor.angle())
+        phazor = torch.exp((self.phazor_angle * 1j - torch.exp(self.ln_minus_ln_phazor_abs)) * self.ln_phazor_scale)
         phazor_progression = torch.pow(phazor.unsqueeze(0), torch.arange(len, device=x.device).unsqueeze(1)) # (len, dim)
         filter = phazor_progression * self.phazor_init.unsqueeze(0)
         filter_fft = torch.fft.fft(filter, n=len*2, dim=0) # (len*2, dim)
@@ -50,7 +47,7 @@ class SConvLayer(nn.Module):
         if self.is_refresh:
             self.last_conv = conv_with_past[:,-1,:]
 
-        y = conv_with_past
+        y = conv_with_past * (1 - torch.exp(- torch.exp(self.ln_minus_ln_phazor_abs) * self.ln_phazor_scale))
         y = y.real.to(dtype)
         return y
 
@@ -59,6 +56,13 @@ class SConvLayer(nn.Module):
 
     def set_is_refresh(self, is_refresh):
         self.is_refresh = is_refresh
+
+    def get_hidden(self):
+        return self.last_conv
+
+    def set_hidden(self, hidden):
+        self.last_conv = hidden
+ 
 
 class SConvBlock(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: int, dropout: float, dtype):
@@ -96,6 +100,12 @@ class SConvBlock(nn.Module):
     def set_is_refresh(self, is_refresh):
         self.spiral_conv.set_is_refresh(is_refresh)
 
+    def get_hidden(self):
+        return self.spiral_conv.get_hidden()
+
+    def set_hidden(self, hidden):
+        self.spiral_conv.set_hidden()
+
 class SConv(nn.Module):
     def __init__(
         self,
@@ -107,17 +117,14 @@ class SConv(nn.Module):
         devices,
         dtype=torch.float,
         token_in_out_parameter_corr = 3.0,
+        out_only_device: bool=True,
     ):
         super().__init__()
         self.devices = devices
         self.dtype = dtype
         self.vocab_size = vocab_size
-        self.token_in = nn.Linear(vocab_size, dim, device=devices[0], dtype=dtype)
-        nn.init.normal_(self.token_in.weight, std=vocab_size**-0.5)
-        nn.init.constant_(self.token_in.bias, 0)
+        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        nn.init.normal_(self.token_out.weight, std=dim**-0.5)
-        nn.init.constant_(self.token_out.bias, 0)
         self.block_list = nn.ModuleList([SConvBlock(dim, dim_ff_hidden, dropout, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=True, bias=True, device=devices[-1], dtype=dtype)
 
@@ -126,13 +133,14 @@ class SConv(nn.Module):
         self.num_parameters_per_block = sum(p.numel() for p in self.block_list[0].parameters())
         self.num_parameters_layer_norm_last = sum(p.numel() for p in self.layer_norm_last.parameters())
         self.num_parameters_token_out = sum(p.numel() for p in self.token_out.parameters())
-        self.num_parameters_corr = (self.num_parameters_per_block * depth) + self.num_parameters_layer_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out) * self.token_in_out_parameter_corr
+        self.num_parameters = (self.num_parameters_per_block * depth) + self.num_parameters_layer_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out)
+        self.out_only_device = out_only_device
 
         for i, block in enumerate(self.block_list):
             self.block_list[i] = block.to(devices[self.device_index(i)])
 
     def device_index(self, i):
-        return (int)((len(self.devices) * (i * self.num_parameters_per_block + self.num_parameters_token_in * self.token_in_out_parameter_corr)) / self.num_parameters_corr)
+        return (int)(((len(self.devices)-(1 if self.out_only_device else 0)) * (i * self.num_parameters_per_block + self.num_parameters_token_in)) / self.num_parameters)
 
     def forward(self, x):
         x = self.token_in(x)
@@ -151,6 +159,19 @@ class SConv(nn.Module):
     def set_is_refresh(self, is_refresh):
         for block in self.block_list:
             block.set_is_refresh(is_refresh)
+
+    def get_hidden(self):
+        hidden_list = []
+        for block in self.block_list:
+            hidden = block.get_hidden()
+            if hidden is None:
+                return None
+            hidden_list.append(hidden.cpu())
+        return torch.stack(hidden_list, dim=1).detach()
+
+    def set_hidden(self, hidden_stack):
+        for i, block in enumerate(self.block_list):
+            block.set_hidden(hidden_stack[:,i].to(self.devices[self.device_index(i)]))
 
     def module_list(self):
         blistlist = []
