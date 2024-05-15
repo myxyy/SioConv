@@ -40,11 +40,17 @@ def main(cfg):
         else:
             epochs = ckpt['epochs']
             steps = ckpt['steps']
-        optimizer = instantiate(ckpt['optimizer_config'])
+        if not cfg.train.reset_steps:
+            optimizer = instantiate(ckpt['optimizer_config'])
+        else:
+            optimizer = instantiate(cfg.train.optimizer)
         optimizer = optimizer(params=model.parameters())
         if not cfg.train.reset_steps:
             optimizer.load_state_dict(ckpt['optimizer'])
-        scheduler = instantiate(ckpt['scheduler_config'])
+        else:
+            scheduler = instantiate(cfg.train.scheduler)
+        if not cfg.train.reset_steps:
+            scheduler = instantiate(ckpt['scheduler_config'])
         scheduler = scheduler(optimizer=optimizer)
         if not cfg.train.reset_steps:
             scheduler.load_state_dict(ckpt['scheduler'])

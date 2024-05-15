@@ -37,4 +37,4 @@ optimizer:
 scheduler:
   _target_: src.scheduler.InvPropDecay
   _partial_: True
-  decay_time: 1000
+  decay_time: 100
