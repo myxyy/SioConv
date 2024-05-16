@@ -17,7 +17,7 @@ class FFN(nn.Module):
         return x
 
 class SioConvLayer(nn.Module):
-    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, dtype):
+    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, depth: int, dtype):
         super().__init__()
         self.dim = dim
         self.dim_qk = dim_qk 
@@ -26,16 +26,17 @@ class SioConvLayer(nn.Module):
         self.fc_qk = nn.Linear(dim, num_head * dim_qk * 2 * 2)
         self.fc_v = nn.Linear(dim, num_head * dim_v * 2)
         self.fc_g = nn.Linear(dim, num_head * dim_v * 2)
-        self.fc_a_angle = nn.Linear(dim, num_head)
+        self.fc_a_angle = nn.Linear(dim, num_head * dim_qk)
         self.fc_y = nn.Linear(num_head * dim_v * 2, dim)
         self.angle_base = 1/1024
         self.p_angle = nn.Parameter(self.angle_base ** torch.linspace(0, 1, num_head*dim_qk).view(num_head, dim_qk), requires_grad=False)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
+        self.depth = depth
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-4)
+        nn.init.xavier_uniform_(self.fc_a_angle.weight, gain=1e-2)
         nn.init.zeros_(self.fc_a_angle.bias)
         nn.init.xavier_uniform_(self.fc_v.weight, gain=1e-2)
         nn.init.zeros_(self.fc_v.bias)
@@ -65,8 +66,8 @@ class SioConvLayer(nn.Module):
         q = qk[:,:,:,:,0]
         k = qk[:,:,:,:,1]
 
-        a_angle = self.fc_a_angle(x) # (batch, len, num_head)
-        ln_a = (a_angle * 1j - 1) * self.p_angle[:,0] # (batch, len, num_head)
+        a_angle = self.fc_a_angle(x).view(batch, len, num_head, dim_qk) # (batch, len, num_head * dim_qk)
+        ln_a = (a_angle * 1j - 1e-3) * self.p_angle # (batch, len, num_head, dim_qk)
 
         len_arange = torch.arange(len, device=x.device)
 
@@ -78,25 +79,28 @@ class SioConvLayer(nn.Module):
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 
-        ln_a_tri = einops.repeat(ln_a, "b l h -> b h l m", m=len).tril(-1) # (batch, num_head, len, len)
-        ln_a_tri_fft = torch.fft.fft(ln_a_tri, n=len*2, dim=2)
-        ln_a_tri_conv = torch.fft.ifft(torch.einsum("bhlm,l->bhlm", ln_a_tri_fft, ones_fft), dim=2).narrow(2,0,len) # (batch, num_head, len, len)
-        c = torch.exp(ln_a_tri_conv).tril() # (batch, num_head, len, len)
+        ln_a_mask = torch.ones(len, device=x.device)
+        ln_a_mask[0] = 0
+        ln_a_masked = torch.einsum("blhi,l->blhi", ln_a, ln_a_mask) # (batch, len, num_head, dim_qk)
+        ln_a_masked_fft = torch.fft.fft(ln_a_masked, n=len*2, dim=1)
+        ln_a_masked_conv = torch.fft.ifft(torch.einsum("blhi,l->blhi", ln_a_masked_fft, ones_fft), dim=1).narrow(1,0,len)
+        a_mask_row = torch.exp(ln_a_masked_conv) # (batch, len, num_head, dim_qk)
+        a_mask_col = 1/a_mask_row # (batch, len, num_head, dim_qk)
 
-        qck = torch.einsum("blhi,bmhi->bhlm", qp, kp) * c # (batch, num_head, len, len)
+        qck = torch.einsum("blhi,bmhi->bhlm", qp * a_mask_row, a_mask_col * kp).tril() # (batch, num_head, len, len)
         h_inner_chunk = torch.einsum("bhlm,bmhv->blhv", qck, v)
 
         ln_a_fft = torch.fft.fft(ln_a, n=len*2, dim=1)
-        ln_a_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
+        ln_a_conv = torch.fft.ifft(torch.einsum("blhi,l->blhi", ln_a_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head, dim_qk)
         d = torch.exp(ln_a_conv) # (batch, len, num_head)
         p = torch.exp(p_angle * 1j) # (num_head, dim_qk)
-        h_cross_chunk = torch.einsum("blhi,bhiv->blhv", torch.einsum("blhi,blh->blhi", qp, d), torch.einsum("bhiv,hi->bhiv", hidden, p))
+        h_cross_chunk = torch.einsum("blhi,bhiv->blhv", torch.einsum("blhi,blhi->blhi", qp, d), torch.einsum("bhiv,hi->bhiv", hidden, p))
 
         h = h_inner_chunk +  h_cross_chunk
 
         p_pow_len_inverse_pk = torch.exp(torch.einsum("hi,l->lhi", p_angle, len - 1 - len_arange) * 1j) # (len, dim_qk)
-        hidden_next_inner_chunk = torch.einsum("blhi,bhl,lhi,blhv->bhiv", k, c[:,:,-1,:], p_pow_len_inverse_pk, v)
-        hidden_next_cross_chunk = torch.einsum("bh,bhiv,hi->bhiv", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
+        hidden_next_inner_chunk = torch.einsum("blhi,blhi,lhi,blhv->bhiv", k, torch.einsum("bhi,blhi->blhi", a_mask_row[:,-1,:,:], a_mask_col), p_pow_len_inverse_pk, v)
+        hidden_next_cross_chunk = torch.einsum("bhi,bhiv,hi->bhiv", torch.exp(ln_a.sum(dim=1)), hidden, torch.exp(p_angle * len * 1j))
         hidden_next = hidden_next_inner_chunk + hidden_next_cross_chunk
 
         h = torch.view_as_real(h.reshape(batch*len, num_head, dim_v))
@@ -108,9 +112,9 @@ class SioConvLayer(nn.Module):
 
 
 class ChunkWiseSioConvLayer(nn.Module):
-    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, chunk_size: int, dtype):
+    def __init__(self, dim: int, dim_qk: int, dim_v: int, num_head: int, chunk_size: int, depth: int, dtype):
         super().__init__()
-        self.sioconv = SioConvLayer(dim, dim_qk, dim_v, num_head, dtype)
+        self.sioconv = SioConvLayer(dim, dim_qk, dim_v, num_head, depth, dtype)
         self.last_hidden = None
         self.last_hidden_init = nn.Parameter(torch.randn(num_head, dim_qk, dim_v, dtype=torch.cfloat))
         self.is_refresh = True
@@ -153,12 +157,12 @@ class ChunkWiseSioConvLayer(nn.Module):
         
 
 class SioConvBlock(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, dim_qk: int, dim_v: int, num_head: int, chunk_size:int, dropout: float, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: int, dim_qk: int, dim_v: int, num_head: int, chunk_size:int, dropout: float, depth: int, dtype):
         super().__init__()
         self.dtype = dtype 
 
         self.layer_norm_sioconv = nn.LayerNorm(dim, dtype=dtype)
-        self.sioconv = ChunkWiseSioConvLayer(dim, dim_qk, dim_v, num_head, chunk_size, dtype)
+        self.sioconv = ChunkWiseSioConvLayer(dim, dim_qk, dim_v, num_head, chunk_size, depth, dtype)
 
         self.layer_norm_ffn = nn.LayerNorm(dim, dtype=dtype)
         self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
@@ -214,7 +218,7 @@ class SioConv(nn.Module):
         self.vocab_size = vocab_size
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, dim_qk, dim_v, num_head, chunk_size, dropout, dtype) for _ in range(depth)])
+        self.block_list = nn.ModuleList([SioConvBlock(dim, dim_ff_hidden, dim_qk, dim_v, num_head, chunk_size, dropout, i, dtype) for i in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, device=devices[-1], dtype=dtype)
 
         self.num_parameters_token_in = calc_num_parameters(self.token_in)
