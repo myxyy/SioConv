@@ -19,6 +19,10 @@ class SConvLayer(nn.Module):
         super().__init__()
         self.dim = dim
         self.fc_phazor_angle = nn.Linear(dim, dim)
+        self.fc_z = nn.Linear(dim, dim)
+        self.fc_g = nn.Linear(dim, dim)
+        self.fc_y = nn.Linear(dim, dim)
+        self.act = nn.SiLU()
         self.phazor_angle_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, dim), requires_grad=False)
         self.last_conv = None # (batch, dim)
         self.last_conv_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
@@ -33,6 +37,8 @@ class SConvLayer(nn.Module):
         dtype = x.dtype
 
         x = x.to(torch.float)
+        z = self.fc_z(x).cfloat()
+        g = self.fc_g(x)
 
         if self.last_conv is None:
             self.last_conv = self.last_conv_init.unsqueeze(0).expand(batch, dim)
@@ -41,7 +47,7 @@ class SConvLayer(nn.Module):
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 
-        ln_phazor = self.fc_phazor_angle(x) * 1j * self.phazor_angle_scale - 1e-3 # (batch, len, dim)
+        ln_phazor = (self.fc_phazor_angle(x) + 1) * 1j * self.phazor_angle_scale - 1e-3 # (batch, len, dim)
         ln_phazor_mask = torch.ones(len, device=x.device)
         ln_phazor_mask[0] = 0
         ln_phazor_masked = torch.einsum("bld,l->bld", ln_phazor, ln_phazor_mask)
@@ -51,7 +57,7 @@ class SConvLayer(nn.Module):
         phazor_masked_col = 1/phazor_masked_row # (batch, len, dim)
         tri_mask = torch.ones(len, len, device=x.device, dtype=torch.cfloat).tril() # (len, len)
 
-        h_inner_chunk = torch.einsum("bld,bld->bld", phazor_masked_row, torch.einsum("lm,bmd->bld", tri_mask, phazor_masked_col * x.cfloat()))
+        h_inner_chunk = torch.einsum("bld,bld->bld", phazor_masked_row, torch.einsum("lm,bmd->bld", tri_mask, phazor_masked_col * z))
 
         ln_phazor_fft = torch.fft.fft(ln_phazor, n=len*2, dim=1)
         ln_phazor_conv = torch.fft.ifft(torch.einsum("bld,l->bld", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len)
@@ -63,7 +69,7 @@ class SConvLayer(nn.Module):
         if self.is_refresh:
             self.last_conv = h[:,-1,:]
 
-        y = self.layer_norm(h.real)
+        y = self.fc_y(self.layer_norm(h.real) * self.act(g))
         return y.to(dtype)
 
     def reset_hidden(self):
@@ -87,17 +93,12 @@ class SConvBlock(nn.Module):
         self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
         self.layer_norm_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
         self.layer_norm_ffn_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
-        self.act = nn.SiLU()
-        self.fc = nn.Linear(dim, dim, dtype=dtype)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         x_ = x
         x = self.layer_norm_sc_in(x)
-        y = self.fc(x)
-        y = self.act(y)
         x = self.spiral_conv(x)
-        x = x * y
         x = self.dropout(x)
         x = x + x_
 

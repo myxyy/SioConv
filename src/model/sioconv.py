@@ -52,7 +52,7 @@ class SioConvLayer(nn.Module):
         k = qk[:,:,:,:,1]
 
         a_angle = self.fc_a_angle(x).view(batch, len, num_head, dim_qk) # (batch, len, num_head * dim_qk)
-        ln_a = a_angle * 1j * self.p_angle - 1e-3 # (batch, len, num_head, dim_qk)
+        ln_a = (a_angle + 1) * 1j * self.p_angle - 1e-3 # (batch, len, num_head, dim_qk)
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 
