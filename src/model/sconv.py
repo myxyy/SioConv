@@ -15,41 +15,56 @@ class FFN(nn.Module):
         return x
 
 class SConvLayer(nn.Module):
-    def __init__(self, dim: int, dtype, phazor_scale_start: float=32, phazor_scale_end: float=2048):
+    def __init__(self, dim: int, dtype):
         super().__init__()
         self.dim = dim
-        self.phazor_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
-        self.phazor_angle = nn.Parameter(torch.randn(dim))
-        self.ln_minus_ln_phazor_abs = nn.Parameter(torch.randn(dim))
-        self.ln_phazor_scale = nn.Parameter(torch.exp(torch.linspace(np.log(1/phazor_scale_start), np.log(1/phazor_scale_end), dim)), requires_grad=False)
+        self.fc_phazor_angle = nn.Linear(dim, dim)
+        self.phazor_angle_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, dim), requires_grad=False)
         self.last_conv = None # (batch, dim)
         self.last_conv_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
+        self.layer_norm = nn.LayerNorm(dim)
         self.is_refresh = True
 
     # (batch, len, dim) -> (batch, len, dim)
     def forward(self, x):
         batch = x.shape[0]
         len = x.shape[1]
+        dim = x.shape[2]
         dtype = x.dtype
 
-        x = x.to(torch.cfloat)
+        x = x.to(torch.float)
+
         if self.last_conv is None:
-            self.last_conv = self.last_conv_init.unsqueeze(0).expand(batch, self.dim)
+            self.last_conv = self.last_conv_init.unsqueeze(0).expand(batch, dim)
         else:
             self.last_conv = self.last_conv.detach()
-        phazor = torch.exp((self.phazor_angle * 1j - torch.exp(self.ln_minus_ln_phazor_abs)) * self.ln_phazor_scale)
-        phazor_progression = torch.pow(phazor.unsqueeze(0), torch.arange(len, device=x.device).unsqueeze(1)) # (len, dim)
-        filter = phazor_progression * self.phazor_init.unsqueeze(0)
-        filter_fft = torch.fft.fft(filter, n=len*2, dim=0) # (len*2, dim)
-        x_fft = torch.fft.fft(x, n=len*2, dim=1) # (batch, len*2, dim)
-        conv_filter_x = torch.fft.ifft(filter_fft.unsqueeze(0) * x_fft, dim=1).narrow(1,0,len) # (batch, len, dim)
-        conv_with_past = conv_filter_x + self.last_conv.unsqueeze(1)*phazor_progression.unsqueeze(0)*phazor.unsqueeze(0).unsqueeze(0)
-        if self.is_refresh:
-            self.last_conv = conv_with_past[:,-1,:]
 
-        y = conv_with_past * (1 - torch.exp(- torch.exp(self.ln_minus_ln_phazor_abs) * self.ln_phazor_scale))
-        y = y.real.to(dtype)
-        return y
+        ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
+
+        ln_phazor = self.fc_phazor_angle(x) * 1j * self.phazor_angle_scale - 1e-3 # (batch, len, dim)
+        ln_phazor_mask = torch.ones(len, device=x.device)
+        ln_phazor_mask[0] = 0
+        ln_phazor_masked = torch.einsum("bld,l->bld", ln_phazor, ln_phazor_mask)
+        ln_phazor_masked_fft = torch.fft.fft(ln_phazor_masked, n=len*2, dim=1)
+        ln_phazor_masked_conv = torch.fft.ifft(torch.einsum("bld,l->bld", ln_phazor_masked_fft, ones_fft), dim=1).narrow(1,0,len)
+        phazor_masked_row = torch.exp(ln_phazor_masked_conv) # (batch, len, dim)
+        phazor_masked_col = 1/phazor_masked_row # (batch, len, dim)
+        tri_mask = torch.ones(len, len, device=x.device, dtype=torch.cfloat).tril() # (len, len)
+
+        h_inner_chunk = torch.einsum("bld,bld->bld", phazor_masked_row, torch.einsum("lm,bmd->bld", tri_mask, phazor_masked_col * x.cfloat()))
+
+        ln_phazor_fft = torch.fft.fft(ln_phazor, n=len*2, dim=1)
+        ln_phazor_conv = torch.fft.ifft(torch.einsum("bld,l->bld", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len)
+        
+        h_cross_chunk = torch.einsum("bld,bd->bld", torch.exp(ln_phazor_conv), self.last_conv)
+
+        h = h_inner_chunk + h_cross_chunk
+
+        if self.is_refresh:
+            self.last_conv = h[:,-1,:]
+
+        y = self.layer_norm(h.real)
+        return y.to(dtype)
 
     def reset_hidden(self):
         self.last_conv = None
