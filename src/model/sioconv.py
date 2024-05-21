@@ -29,7 +29,7 @@ class SioConvLayer(nn.Module):
         self.fc_a_angle = nn.Linear(dim, num_head * dim_qk)
         self.fc_y = nn.Linear(num_head * dim_v * 2, dim)
         self.angle_base = 1/1024
-        self.p_angle = nn.Parameter(self.angle_base ** torch.linspace(0, 1, dim_qk), requires_grad=False)
+        self.p_angle = nn.Parameter(self.angle_base ** torch.linspace(0, 1, num_head*dim_qk).view(num_head, dim_qk), requires_grad=False)
         self.act = nn.SiLU()
         self.group_norm = nn.GroupNorm(num_head, num_head)
         self.depth = depth
@@ -65,7 +65,7 @@ class SioConvLayer(nn.Module):
         k = qk[:,:,:,:,1]
 
         a_angle = self.fc_a_angle(x).view(batch, len, num_head, dim_qk) # (batch, len, num_head * dim_qk)
-        ln_a = (a_angle + 1) * 1j * self.p_angle - 1e-3 # (batch, len, num_head, dim_qk)
+        ln_a = (a_angle + 1) * 1j * self.p_angle - 0.01 * self.p_angle[:,0].unsqueeze(0).unsqueeze(1).unsqueeze(3) # (batch, len, num_head, dim_qk)
 
         ones_fft = torch.fft.fft(torch.ones(len, device=x.device), n=len*2)
 

@@ -59,7 +59,7 @@ class SConvLayer(nn.Module):
         ones = torch.ones(len, device=x.device)
         ones_fft = torch.fft.fft(ones, n=len*2)
 
-        ln_phazor = (self.fc_phazor_angle(x) + 1) * 1j * self.phazor_angle_scale - 1e-3 # (batch, len, dim)
+        ln_phazor = ((self.fc_phazor_angle(x) + 1) * 1j - 0.01) * self.phazor_angle_scale # (batch, len, dim)
         ln_phazor_mask = torch.ones(len, device=x.device)
         ln_phazor_mask[0] = 0
         ln_phazor_masked = torch.einsum("bld,l->bld", ln_phazor, ln_phazor_mask)
@@ -81,7 +81,8 @@ class SConvLayer(nn.Module):
         if self.is_refresh:
             self.last_conv = h[:,-1,:]
 
-        y = self.fc_y(self.layer_norm(torch.view_as_real(h).reshape(batch, len, dim*2)) * self.act(g))
+        h_normalize = h * (1 - torch.exp(-0.01 * self.phazor_angle_scale))
+        y = self.fc_y(self.layer_norm(torch.view_as_real(h_normalize).reshape(batch, len, dim*2)) * self.act(g))
         return y.to(dtype)
 
     def reset_hidden(self):
