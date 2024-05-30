@@ -2,46 +2,63 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-class FFN(nn.Module):
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine=True):
+        super().__init__()
+        self.normalized_shape = dim
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if self.elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(dim))
+        else:
+            self.weight = None
+
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x):
+        output = self._norm(x.float()).type_as(x)
+        if self.weight is not None:
+            output = output * self.weight
+        return output
+
+class FFNSwiGLU(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: float, dtype):
         super().__init__()
-        self.fc_1 = nn.Linear(dim, dim_ff_hidden, bias=True, dtype=dtype)
-        self.fc_2 = nn.Linear(dim_ff_hidden, dim, bias=True, dtype=dtype)
+        self.fc = nn.Linear(dim, dim_ff_hidden, dtype=dtype)
+        self.fc_act = nn.Linear(dim, dim_ff_hidden, dtype=dtype)
+        self.fc_out = nn.Linear(dim_ff_hidden, dim, dtype=dtype)
         self.act = nn.SiLU()
     def forward(self, x):
-        x = self.fc_1(x)
-        x = self.act(x)
-        x = self.fc_2(x)
+        x = self.fc(x) * self.act(self.fc_act(x))
+        x = self.fc_out(x)
         return x
 
 class SConvLayer(nn.Module):
     def __init__(self, dim: int, dtype):
         super().__init__()
         self.dim = dim
-        self.fc_phazor_angle = nn.Linear(dim, dim)
-        self.fc_z_tanh = nn.Linear(dim, dim)
-        self.fc_z_sigmoid = nn.Linear(dim, dim)
-        self.fc_y_tanh = nn.Linear(dim, dim)
-        self.fc_y_sigmoid = nn.Linear(dim, dim)
+        self.fc_z = nn.Linear(dim, dim)
+        self.fc_z_act = nn.Linear(dim, dim)
+        self.fc_y = nn.Linear(dim, dim)
+        self.fc_y_act = nn.Linear(dim, dim)
         self.act = nn.SiLU()
         self.phazor_angle_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, dim), requires_grad=False)
         self.last_conv = None # (batch, dim)
         self.last_conv_init = nn.Parameter(torch.randn(dim, dtype=torch.cfloat))
-        self.layer_norm = nn.LayerNorm(dim)
+        self.norm = RMSNorm(dim)
         self.is_refresh = True
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_normal_(self.fc_phazor_angle.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_phazor_angle.bias)
-        nn.init.xavier_normal_(self.fc_z_tanh.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_z_tanh.bias)
-        nn.init.xavier_normal_(self.fc_z_sigmoid.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_z_sigmoid.bias)
-        nn.init.xavier_normal_(self.fc_y_tanh.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_y_tanh.bias)
-        nn.init.xavier_normal_(self.fc_y_sigmoid.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_y_sigmoid.bias)
+        nn.init.xavier_normal_(self.fc_z.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_z.bias)
+        nn.init.xavier_normal_(self.fc_z_act.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_z_act.bias)
+        nn.init.xavier_normal_(self.fc_y.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_y.bias)
+        nn.init.xavier_normal_(self.fc_y_act.weight, gain=1e-2)
+        nn.init.zeros_(self.fc_y_act.bias)
 
     # (batch, len, dim) -> (batch, len, dim)
     def forward(self, x):
@@ -51,41 +68,28 @@ class SConvLayer(nn.Module):
         dtype = x.dtype
 
         x = x.to(torch.float)
-        z = (nn.functional.tanh(self.fc_z_tanh(x)) * nn.functional.sigmoid(self.fc_z_sigmoid(x))).cfloat() # (batch, len, dim)
+        z = (self.fc_z(x) * self.act(self.fc_z_act(x))).cfloat() # (batch, len, dim)
 
         if self.last_conv is None:
             self.last_conv = self.last_conv_init.unsqueeze(0).expand(batch, dim)
         else:
             self.last_conv = self.last_conv.detach()
 
-        ones = torch.ones(len, device=x.device)
-        ones_fft = torch.fft.fft(ones, n=len*2)
+        ln_phazor = self.phazor_angle_scale * 1j + 1e-5 # (dim)
+        phazor_prog = torch.exp(torch.einsum("l,d->ld", torch.arange(len, device=x.device), ln_phazor)) # (len, dim)
 
-        ln_phazor = (nn.functional.sigmoid(self.fc_phazor_angle(x)) * (0.5j * np.pi - 0.01)) * self.phazor_angle_scale # (batch, len, dim)
-        ln_phazor_mask = torch.ones(len, device=x.device)
-        ln_phazor_mask[0] = 0
-        ln_phazor_masked = torch.einsum("bld,l->bld", ln_phazor, ln_phazor_mask)
-        ln_phazor_masked_fft = torch.fft.fft(ln_phazor_masked, n=len*2, dim=1)
-        ln_phazor_masked_conv = torch.fft.ifft(torch.einsum("bld,l->bld", ln_phazor_masked_fft, ones_fft), dim=1).narrow(1,0,len)
-        phazor_masked_row = torch.exp(ln_phazor_masked_conv) # (batch, len, dim)
-        phazor_masked_col = 1/phazor_masked_row # (batch, len, dim)
-
-        tri_mask = torch.ones(len, len, device=x.device, dtype=torch.cfloat).tril() # (len, len)
-        h_inner_chunk = torch.einsum("bld,bld->bld", phazor_masked_row, torch.einsum("lm,bmd->bld", tri_mask, phazor_masked_col * z))
-
-        ln_phazor_fft = torch.fft.fft(ln_phazor, n=len*2, dim=1)
-        ln_phazor_conv = torch.fft.ifft(torch.einsum("bld,l->bld", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len)
+        phazor_prog_fft = torch.fft.fft(phazor_prog, n=len*2, dim=0)
+        z_fft = torch.fft.fft(z, n=len*2, dim=1)
+        h_inner_chunk = torch.fft.ifft(torch.einsum("bld,ld->bld", z_fft, phazor_prog_fft), dim=0).narrow(1,0,len)
         
-        h_cross_chunk = torch.einsum("bld,bd->bld", torch.exp(ln_phazor_conv), self.last_conv)
+        h_cross_chunk = torch.einsum("bd,ld,d->bld", self.last_conv, phazor_prog, torch.exp(ln_phazor))
 
         h = h_inner_chunk + h_cross_chunk
 
         if self.is_refresh:
             self.last_conv = h[:,-1,:]
 
-        h_normalize = h * (1 - torch.exp(-0.01 * self.phazor_angle_scale))
-        y_tanh = self.fc_y_tanh(self.layer_norm(h_normalize.real))
-        y = nn.functional.tanh(y_tanh) * nn.functional.sigmoid(self.fc_y_sigmoid(x))
+        y = self.fc_y(self.norm(h.real)) * self.act(self.fc_y_act(x))
         return y.to(dtype)
 
     def reset_hidden(self):
@@ -105,40 +109,40 @@ class SConvBlock(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: int, dropout: float, dtype):
         super().__init__()
         self.dtype = dtype 
-        self.spiral_conv = SConvLayer(dim, dtype)
-        self.ffn_sc = FFN(dim, dim_ff_hidden, dtype)
-        self.layer_norm_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
-        self.layer_norm_ffn_sc_in = nn.LayerNorm(dim, elementwise_affine=True, bias=True, dtype=dtype)
+        self.sconv = SConvLayer(dim, dtype)
+        self.ffn = FFNSwiGLU(dim, dim_ff_hidden, dtype)
+        self.norm_sconv = RMSNorm(dim)
+        self.norm_ffn = RMSNorm(dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         x_ = x
-        x = self.layer_norm_sc_in(x)
-        x = self.spiral_conv(x)
+        x = self.norm_sconv(x)
+        x = self.sconv(x)
         x = self.dropout(x)
         x = x + x_
 
         x_ = x
-        x = self.layer_norm_ffn_sc_in(x)
-        x = self.ffn_sc(x)
+        x = self.norm_ffn(x)
+        x = self.ffn(x)
         x = self.dropout(x)
         x = x + x_
 
         return x
 
     def reset_hidden(self):
-        self.spiral_conv.reset_hidden()
+        self.sconv.reset_hidden()
 
     def set_is_refresh(self, is_refresh):
-        self.spiral_conv.set_is_refresh(is_refresh)
+        self.sconv.set_is_refresh(is_refresh)
 
     def get_hidden(self):
-        return self.spiral_conv.get_hidden()
+        return self.sconv.get_hidden()
 
     def set_hidden(self, hidden):
         self.spiral_conv.set_hidden(hidden)
 
-class SConv(nn.Module):
+class SConvLTI(nn.Module):
     def __init__(
         self,
         depth: int,
