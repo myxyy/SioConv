@@ -75,7 +75,7 @@ class SConvLayer(nn.Module):
         else:
             self.last_conv = self.last_conv.detach()
 
-        ln_phazor = self.phazor_angle_scale * 1j + 1e-5 # (dim)
+        ln_phazor = self.phazor_angle_scale * 1j - 1e-5 # (dim)
         phazor_prog = torch.exp(torch.einsum("l,d->ld", torch.arange(len, device=x.device), ln_phazor)) # (len, dim)
 
         phazor_prog_fft = torch.fft.fft(phazor_prog, n=len*2, dim=0)
