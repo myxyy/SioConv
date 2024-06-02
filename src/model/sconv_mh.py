@@ -41,23 +41,20 @@ class SConvLayer(nn.Module):
         assert dim % num_head == 0, 'dim must be multiple of num_head'
         self.dim = dim
         self.num_head = num_head
-        self.fc_phazor_angle = nn.Linear(dim, num_head)
         self.fc_phazor_abs = nn.Linear(dim, num_head)
         self.fc_z= nn.Linear(dim, dim)
         self.fc_z_act = nn.Linear(dim, dim)
         self.fc_y = nn.Linear(dim, dim)
         self.fc_y_act = nn.Linear(dim, dim)
         self.act = nn.SiLU()
-        self.phazor_angle_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, num_head), requires_grad=False)
+        self.ln_phazor_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, num_head), requires_grad=False)
         self.last_conv = None # (batch, dim)
-        self.last_conv_init = nn.Parameter(torch.randn(num_head, dim//num_head, dtype=torch.cfloat))
+        self.last_conv_init = nn.Parameter(torch.randn(num_head, dim//num_head))
         self.norm = nn.GroupNorm(num_head, num_head)
         self.is_refresh = True
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_normal_(self.fc_phazor_angle.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_phazor_angle.bias)
         nn.init.xavier_normal_(self.fc_phazor_abs.weight, gain=1e-2)
         nn.init.zeros_(self.fc_phazor_abs.bias)
         nn.init.xavier_normal_(self.fc_z.weight, gain=1e-2)
@@ -79,7 +76,7 @@ class SConvLayer(nn.Module):
         inner_dim = dim//num_head
 
         x = x.to(torch.float)
-        z = (self.fc_z(x) * self.act(self.fc_z_act(x))).cfloat().view(batch, len, num_head, inner_dim) # (batch, len, num_head, inner_dim)
+        z = (self.fc_z(x) * self.act(self.fc_z_act(x))).view(batch, len, num_head, inner_dim) # (batch, len, num_head, inner_dim)
 
         if self.last_conv is None:
             self.last_conv = einops.repeat(self.last_conv_init, "n i -> b n i", b=batch) # (batch, num_head, inner_dim)
@@ -87,18 +84,18 @@ class SConvLayer(nn.Module):
             self.last_conv = self.last_conv.detach()
 
         ones = torch.ones(len, device=x.device)
-        ones_fft = torch.fft.fft(ones, n=len*2)
+        ones_fft = torch.fft.rfft(ones, n=len*2)
 
-        ln_phazor = (self.act(self.fc_phazor_angle(x)) * 1j - nn.functional.sigmoid(self.fc_phazor_abs(x))) * self.phazor_angle_scale # (batch, len, num_head)
+        ln_phazor = torch.log(nn.functional.sigmoid(self.fc_phazor_abs(x))) * self.ln_phazor_scale # (batch, len, num_head)
         ln_phazor_masked = einops.repeat(ln_phazor, "b l h ->b l m h", m=len).tril(-1) # (batch, len, len, num_head)
-        ln_phazor_masked_fft = torch.fft.fft(ln_phazor_masked, n=len*2, dim=1) # (batch, len, len, num_head)
-        ln_phazor_masked_conv = torch.fft.ifft(torch.einsum("blmh,l->blmh", ln_phazor_masked_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, len, num_head)
+        ln_phazor_masked_fft = torch.fft.rfft(ln_phazor_masked, n=len*2, dim=1) # (batch, len, len, num_head)
+        ln_phazor_masked_conv = torch.fft.irfft(torch.einsum("blmh,l->blmh", ln_phazor_masked_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, len, num_head)
         phazor_masked_conv = torch.exp(ln_phazor_masked_conv).tril() # (batch, len, len, num_head)
 
         h_inner_chunk = torch.einsum("blmh,bmhi->blhi", phazor_masked_conv, z)
 
-        ln_phazor_fft = torch.fft.fft(ln_phazor, n=len*2, dim=1)
-        ln_phazor_conv = torch.fft.ifft(torch.einsum("blh,l->blh", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
+        ln_phazor_fft = torch.fft.rfft(ln_phazor, n=len*2, dim=1)
+        ln_phazor_conv = torch.fft.irfft(torch.einsum("blh,l->blh", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
         
         h_cross_chunk = torch.einsum("blh,bhi->blhi", torch.exp(ln_phazor_conv), self.last_conv)
 
@@ -107,7 +104,7 @@ class SConvLayer(nn.Module):
         if self.is_refresh:
             self.last_conv = h[:,-1,:,:]
 
-        h_norm = self.norm(h.real.view(batch*len, num_head, inner_dim)).view(batch, len, dim)
+        h_norm = self.norm(h.view(batch*len, num_head, inner_dim)).view(batch, len, dim)
         y = self.fc_y(h_norm) * self.act(self.fc_y_act(x))
         return y.to(dtype)
 
