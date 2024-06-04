@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import einops
 
@@ -36,18 +37,22 @@ class FFNSwiGLU(nn.Module):
         return x
 
 class SConvLayer(nn.Module):
-    def __init__(self, dim: int, num_head: int, dtype):
+    def __init__(self, dim: int, num_head: int, dtype, a_init_range=(1,16), dt_init_range=(0.001,0.1)):
         super().__init__()
         assert dim % num_head == 0, 'dim must be multiple of num_head'
         self.dim = dim
         self.num_head = num_head
-        self.fc_phazor_abs = nn.Linear(dim, num_head)
         self.fc_z= nn.Linear(dim, dim)
         self.fc_z_act = nn.Linear(dim, dim)
         self.fc_y = nn.Linear(dim, dim)
         self.fc_y_act = nn.Linear(dim, dim)
         self.act = nn.SiLU()
-        self.ln_phazor_scale = nn.Parameter(1e-3 ** torch.linspace(0, 1, num_head), requires_grad=False)
+        self.ln_a = nn.Parameter(torch.log(torch.empty(num_head).uniform_(*a_init_range)))
+        self.fc_dt = nn.Linear(dim, num_head)
+        dt = torch.exp(torch.empty(num_head).uniform_(np.log(dt_init_range[0]), np.log(dt_init_range[1])))
+        # inv_softplus_dt = torch.log(torch.exp(dt)-1) equals
+        inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
+        self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
         self.last_conv = None # (batch, dim)
         self.last_conv_init = nn.Parameter(torch.randn(num_head, dim//num_head))
         self.norm = nn.GroupNorm(num_head, num_head)
@@ -55,8 +60,7 @@ class SConvLayer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_normal_(self.fc_phazor_abs.weight, gain=1e-2)
-        nn.init.zeros_(self.fc_phazor_abs.bias)
+        nn.init.xavier_normal_(self.fc_dt.weight, gain=1e-2)
         nn.init.xavier_normal_(self.fc_z.weight, gain=1e-2)
         nn.init.zeros_(self.fc_z.bias)
         nn.init.xavier_normal_(self.fc_z_act.weight, gain=1e-2)
@@ -86,18 +90,18 @@ class SConvLayer(nn.Module):
         ones = torch.ones(len, device=x.device)
         ones_fft = torch.fft.rfft(ones, n=len*2)
 
-        ln_phazor = torch.log(nn.functional.sigmoid(self.fc_phazor_abs(x))) * self.ln_phazor_scale # (batch, len, num_head)
-        ln_phazor_masked = einops.repeat(ln_phazor, "b l h ->b l m h", m=len).tril(-1) # (batch, len, len, num_head)
-        ln_phazor_masked_fft = torch.fft.rfft(ln_phazor_masked, n=len*2, dim=1) # (batch, len, len, num_head)
-        ln_phazor_masked_conv = torch.fft.irfft(torch.einsum("blmh,l->blmh", ln_phazor_masked_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, len, num_head)
-        phazor_masked_conv = torch.exp(ln_phazor_masked_conv).tril() # (batch, len, len, num_head)
+        ln_da = - torch.exp(self.ln_a) * F.softplus(self.fc_dt(x)) # (batch, len, num_head)
+        ln_da_masked = einops.repeat(ln_da, "b l h ->b l m h", m=len).tril(-1) # (batch, len, len, num_head)
+        ln_da_masked_fft = torch.fft.rfft(ln_da_masked, n=len*2, dim=1) # (batch, len, len, num_head)
+        ln_da_masked_conv = torch.fft.irfft(torch.einsum("blmh,l->blmh", ln_da_masked_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, len, num_head)
+        da_masked_conv = torch.exp(ln_da_masked_conv).tril() # (batch, len, len, num_head)
 
-        h_inner_chunk = torch.einsum("blmh,bmhi->blhi", phazor_masked_conv, z)
+        h_inner_chunk = torch.einsum("blmh,bmhi->blhi", da_masked_conv, z)
 
-        ln_phazor_fft = torch.fft.rfft(ln_phazor, n=len*2, dim=1)
-        ln_phazor_conv = torch.fft.irfft(torch.einsum("blh,l->blh", ln_phazor_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
+        ln_da_fft = torch.fft.rfft(ln_da, n=len*2, dim=1)
+        ln_da_conv = torch.fft.irfft(torch.einsum("blh,l->blh", ln_da_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
         
-        h_cross_chunk = torch.einsum("blh,bhi->blhi", torch.exp(ln_phazor_conv), self.last_conv)
+        h_cross_chunk = torch.einsum("blh,bhi->blhi", torch.exp(ln_da_conv), self.last_conv)
 
         h = h_inner_chunk + h_cross_chunk
 
