@@ -31,7 +31,7 @@ def main(cfg):
 
     if ckpt_path is not None:
         ckpt = torch.load(ckpt_path)
-        model = instantiate(ckpt['model_config'])
+        model = instantiate(cfg.model)
         model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         model.load_state_dict(ckpt['model'])
         if cfg.train.reset_steps:
@@ -40,20 +40,19 @@ def main(cfg):
         else:
             epochs = ckpt['epochs']
             steps = ckpt['steps']
-        if not cfg.train.reset_steps:
-            optimizer = instantiate(ckpt['optimizer_config'])
-        else:
-            optimizer = instantiate(cfg.train.optimizer)
+        optimizer = instantiate(cfg.train.optimizer)
         optimizer = optimizer(params=model.parameters())
         if not cfg.train.reset_steps:
             optimizer.load_state_dict(ckpt['optimizer'])
+
+        if cfg.train.scheduler is None:
+            scheduler = None
         else:
             scheduler = instantiate(cfg.train.scheduler)
-        if not cfg.train.reset_steps:
-            scheduler = instantiate(ckpt['scheduler_config'])
-        scheduler = scheduler(optimizer=optimizer)
-        if not cfg.train.reset_steps:
-            scheduler.load_state_dict(ckpt['scheduler'])
+            scheduler = scheduler(optimizer=optimizer)
+            if not cfg.train.reset_steps:
+                scheduler.load_state_dict(ckpt['scheduler'])
+
         if not cfg.train.reset_steps:
             model.set_hidden(ckpt['hidden'])
         del ckpt
@@ -64,8 +63,11 @@ def main(cfg):
         steps = 0
         optimizer = instantiate(cfg.train.optimizer)
         optimizer = optimizer(params=model.parameters())
-        scheduler = instantiate(cfg.train.scheduler)
-        scheduler = scheduler(optimizer=optimizer)
+        if cfg.train.scheduler is None:
+            scheduler = None
+        else:
+            scheduler = instantiate(cfg.train.scheduler)
+            scheduler = scheduler(optimizer=optimizer)
 
     total_steps = len(dataset) // cfg.train.batch_size_per_acc
     print(f'loaded. steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
@@ -99,9 +101,6 @@ def main(cfg):
             'epochs': epochs,
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict(),
-            'model_config': cfg.model,
-            'optimizer_config': cfg.train.optimizer,
-            'scheduler_config': cfg.train.scheduler,
             'hidden': model.get_hidden(),
         }, cfg.train.weight)
 
@@ -113,9 +112,6 @@ def main(cfg):
             'epochs': backup_epochs,
             'optimizer': backup_optimizer_state_dict,
             'scheduler': backup_scheduler_state_dict,
-            'model_config': cfg.model,
-            'optimizer_config': cfg.train.optimizer,
-            'scheduler_config': cfg.train.scheduler,
             'hidden': backup_hidden,
         }, cfg.train.weight)
 
@@ -157,8 +153,11 @@ def main(cfg):
                 loss_norm_acc.backward()
 
                 if steps % cfg.train.num_acc == 0:
+                    if cfg.train.grad_clip is not None:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
                     optimizer.step()
-                    scheduler.step()
+                    if scheduler is not None:
+                        scheduler.step()
                     optimizer.zero_grad()
                 pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
                 steps += 1

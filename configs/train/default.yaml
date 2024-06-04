@@ -38,3 +38,5 @@ scheduler:
   _target_: src.scheduler.InvPropDecay
   _partial_: True
   decay_time: 100
+
+grad_clip: 2.0
