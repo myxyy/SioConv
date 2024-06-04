@@ -2,9 +2,9 @@
 
 defaults:
   - override /model: sconv_mh
+#  - override /train/scheduler: lr_test
 
 train:
   weight: "weight/weight_sconv_mh.ckpt"
-  scheduler: null
   optimizer:
-    lr: 6e-4
+    lr: 1e-7

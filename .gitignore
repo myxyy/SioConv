@@ -5,7 +5,7 @@ lightning_logs*
 *.pth
 *.ckpt
 *.npy
-log*
+logs/*
 outputs/
 poetry.lock
 sp/*.model

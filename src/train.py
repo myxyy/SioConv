@@ -11,6 +11,7 @@ from tqdm import tqdm
 from torch.distributed.pipeline.sync import Pipe
 import copy
 from helper import calc_num_parameters
+from torch.utils.tensorboard import SummaryWriter
 
 @hydra.main(version_base=None, config_path="../configs/", config_name="config")
 def main(cfg):
@@ -20,14 +21,14 @@ def main(cfg):
     transforms = torchvision.transforms.Compose([])
     tokenizer = instantiate(cfg.tokenizer)
     vocab_size = tokenizer.vocab_size
-    #dataset = TextDataset(cfg.train.text, cfg.train.length, tokenizer, transforms, tokenized_text_dir_path=cfg.tokenized_text_dir_path)
     dataset = instantiate(cfg.train.dataset)
     ckpt_path = cfg.train.weight
     ckpt_path = ckpt_path if os.path.isfile(ckpt_path) else None
-    #trainer = pl.Trainer(devices=1, accelerator='gpu', max_epochs=cfg.train.max_epochs, log_every_n_steps=cfg.train.log_every_n_steps, logger=[TensorBoardLogger('./')])
     devices = cfg.train.devices
 
     print('loading model...')
+
+    logger: SummaryWriter = instantiate(cfg.train.logger)
 
     if ckpt_path is not None:
         ckpt = torch.load(ckpt_path)
@@ -121,6 +122,7 @@ def main(cfg):
     last_steps = steps
 
     try:
+        loss_sum = 0
         for _ in range(cfg.train.max_epochs - epochs):
 
             dataloader = torch.utils.data.DataLoader([dataset[i] for i in range(cfg.train.batch_size_per_acc * steps, len(dataset))], batch_size=cfg.train.batch_size_per_acc, shuffle=False, num_workers=os.cpu_count(), pin_memory=True, drop_last=True)
@@ -153,8 +155,12 @@ def main(cfg):
  
                 loss_norm_acc = loss / cfg.train.num_acc
                 loss_norm_acc.backward()
+                loss_sum += loss_norm_acc
 
                 if steps % cfg.train.num_acc == 0:
+                    logger.add_scalar("loss", loss_norm_acc, steps // cfg.train.num_acc)
+                    logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps // cfg.train.num_acc)
+                    loss_sum = 0
                     if cfg.train.grad_clip is not None:
                         nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
                     optimizer.step()

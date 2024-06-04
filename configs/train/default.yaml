@@ -1,6 +1,6 @@
 length: 1024
 batch_size_per_acc: 4
-num_acc: 100
+num_acc: 10
 max_epochs: 1
 save_every_n_steps: 5000
 backup_every_n_steps: 500
@@ -8,6 +8,7 @@ refresh_every_n_steps: null
 reset_steps: false
 defaults:
   - dataset: wiki_ja_hf.yaml
+  - scheduler: inv_prop_decay.yaml
 weight: "weight/weight.ckpt"
 pipeline_checkpoint: 'never'
 #pipeline_checkpoint: 'except_last'
@@ -34,9 +35,8 @@ optimizer:
   #cycle_mul: 1.0
   #lr_min: 5e-6
 
-scheduler:
-  _target_: src.scheduler.InvPropDecay
-  _partial_: True
-  decay_time: 100
+logger:
+  _target_: torch.utils.tensorboard.SummaryWriter
+  log_dir: "logs/"
 
 grad_clip: 2.0
