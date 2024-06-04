@@ -90,7 +90,8 @@ def main(cfg):
     backup_steps = steps
     backup_epochs = epochs
     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
-    backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
+    if scheduler is not None:
+        backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
     backup_hidden = copy.deepcopy(find_tensor_and_transfer(model.get_hidden()))
 
     def save():
@@ -100,7 +101,7 @@ def main(cfg):
             'steps': steps,
             'epochs': epochs,
             'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
+            'scheduler': scheduler.state_dict() if scheduler is not None else None,
             'hidden': model.get_hidden(),
         }, cfg.train.weight)
 
@@ -111,7 +112,7 @@ def main(cfg):
             'steps': backup_steps,
             'epochs': backup_epochs,
             'optimizer': backup_optimizer_state_dict,
-            'scheduler': backup_scheduler_state_dict,
+            'scheduler': backup_scheduler_state_dict if scheduler is not None else None,
             'hidden': backup_hidden,
         }, cfg.train.weight)
 
@@ -134,7 +135,8 @@ def main(cfg):
                     backup_steps = steps
                     backup_epochs = epochs
                     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
-                    backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
+                    if scheduler is not None:
+                        backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
                     backup_hidden = copy.deepcopy(find_tensor_and_transfer(model.get_hidden()))
 
                 if cfg.train.refresh_every_n_steps is not None and steps % cfg.train.refresh_every_n_steps == 0:

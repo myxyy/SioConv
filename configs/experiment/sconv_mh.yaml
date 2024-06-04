@@ -5,3 +5,6 @@ defaults:
 
 train:
   weight: "weight/weight_sconv_mh.ckpt"
+  scheduler: null
+  optimizer:
+    lr: 6e-4
