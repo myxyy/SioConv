@@ -70,8 +70,8 @@ class SConvLayer(nn.Module):
         nn.init.xavier_normal_(self.fc_y_act.weight, gain=1e-2)
         nn.init.zeros_(self.fc_y_act.bias)
 
-    # (batch, len, dim) -> (batch, len, dim)
-    def forward(self, x):
+    # (batch, len, dim), (batch, num_head, inner_dim) -> (batch, len, dim), (batch, num_head, inner_dim)
+    def forward(self, x, hidden):
         batch = x.shape[0]
         len = x.shape[1]
         dim = x.shape[2]
@@ -81,11 +81,6 @@ class SConvLayer(nn.Module):
 
         x = x.to(torch.float)
         z = (self.fc_z(x) * self.act(self.fc_z_act(x))).view(batch, len, num_head, inner_dim) # (batch, len, num_head, inner_dim)
-
-        if self.last_conv is None:
-            self.last_conv = einops.repeat(self.last_conv_init, "n i -> b n i", b=batch) # (batch, num_head, inner_dim)
-        else:
-            self.last_conv = self.last_conv.detach()
 
         ones = torch.ones(len, device=x.device)
         ones_fft = torch.fft.rfft(ones, n=len*2)
@@ -101,35 +96,65 @@ class SConvLayer(nn.Module):
         ln_da_fft = torch.fft.rfft(ln_da, n=len*2, dim=1)
         ln_da_conv = torch.fft.irfft(torch.einsum("blh,l->blh", ln_da_fft, ones_fft), dim=1).narrow(1,0,len) # (batch, len, num_head)
         
-        h_cross_chunk = torch.einsum("blh,bhi->blhi", torch.exp(ln_da_conv), self.last_conv)
+        h_cross_chunk = torch.einsum("blh,bhi->blhi", torch.exp(ln_da_conv), hidden)
 
         h = h_inner_chunk + h_cross_chunk
 
-        if self.is_refresh:
-            self.last_conv = h[:,-1,:,:]
+        hidden_next = h[:,-1,:,:]
 
         h_norm = self.norm(h.view(batch*len, num_head, inner_dim)).view(batch, len, dim)
         y = self.fc_y(h_norm) * self.act(self.fc_y_act(x))
-        return y.to(dtype)
+        return y.to(dtype), hidden_next
 
+class ChunkWiseSConvLayer(nn.Module):
+    def __init__(self, dim: int, num_head: int, chunk_size: int, dtype):
+        super().__init__()
+        self.sconv = SConvLayer(dim, num_head, dtype)
+        self.last_hidden = None
+        self.last_hidden_init = nn.Parameter(torch.randn(num_head, dim//num_head))
+        self.is_refresh = True
+        self.dim = dim
+        self.num_head = num_head
+        self.chunk_size = chunk_size
+
+    def forward(self, x):
+        batch = x.shape[0]
+        num_head = self.num_head
+        dim = self.dim
+
+        if self.last_hidden is None:
+            hidden = self.last_hidden_init.unsqueeze(0).expand(batch, num_head, dim//num_head)
+        else:
+            hidden = self.last_hidden.detach()
+
+        input_chunks = x.split(self.chunk_size, dim=1)
+        output_chunks = []
+        for input_chunk in input_chunks:
+            output_chunk, hidden = self.sconv(input_chunk, hidden)
+            output_chunks.append(output_chunk)
+
+        if self.is_refresh:
+            self.last_hidden = hidden
+
+        return torch.cat(output_chunks, dim=1)
+ 
     def reset_hidden(self):
-        self.last_conv = None
+        self.last_hidden = None
 
     def set_is_refresh(self, is_refresh):
         self.is_refresh = is_refresh
 
     def get_hidden(self):
-        return self.last_conv
+        return self.last_hidden
 
     def set_hidden(self, hidden):
-        self.last_conv = hidden
- 
+        self.last_hidden = hidden
 
 class SConvBlock(nn.Module):
-    def __init__(self, dim: int, num_head: int, dim_ff_hidden: int, dropout: float, dtype):
+    def __init__(self, dim: int, num_head: int, dim_ff_hidden: int, dropout: float, chunk_size: int, dtype):
         super().__init__()
         self.dtype = dtype 
-        self.sconv = SConvLayer(dim, num_head, dtype)
+        self.sconv = ChunkWiseSConvLayer(dim, num_head, chunk_size, dtype)
         self.ffn = FFNSwiGLU(dim, dim_ff_hidden, dtype)
         self.norm_sconv = RMSNorm(dim)
         self.norm_ffn = RMSNorm(dim)
@@ -172,6 +197,7 @@ class SConvMH(nn.Module):
         dropout: float,
         vocab_size: int,
         devices,
+        chunk_size: int=512,
         dtype=torch.float,
         token_in_out_parameter_corr = 3.0,
         out_only_device: bool=True,
@@ -182,7 +208,7 @@ class SConvMH(nn.Module):
         self.vocab_size = vocab_size
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        self.block_list = nn.ModuleList([SConvBlock(dim, num_head, dim_ff_hidden, dropout, dtype) for _ in range(depth)])
+        self.block_list = nn.ModuleList([SConvBlock(dim, num_head, dim_ff_hidden, dropout, chunk_size, dtype) for _ in range(depth)])
         self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=True, bias=True, device=devices[-1], dtype=dtype)
 
         self.token_in_out_parameter_corr = token_in_out_parameter_corr
