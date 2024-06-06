@@ -37,12 +37,10 @@ def main(cfg):
         if cfg.train.reset_steps:
             epochs = 0
             steps = 0
-            updates = 0
             log_dir = cfg.train.log_dir + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         else:
             epochs = ckpt['epochs']
             steps = ckpt['steps']
-            updates = ckpt['updates']
             log_dir = ckpt['log_dir']
         optimizer = instantiate(cfg.train.optimizer)
         optimizer = optimizer(params=model.parameters())
@@ -65,7 +63,6 @@ def main(cfg):
         model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         epochs = 0
         steps = 0
-        updates = 0
         optimizer = instantiate(cfg.train.optimizer)
         optimizer = optimizer(params=model.parameters())
         log_dir = cfg.train.log_dir + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -98,7 +95,6 @@ def main(cfg):
     backup_model_state_dict = copy.deepcopy(find_tensor_and_transfer(model.state_dict()))
     backup_steps = steps
     backup_epochs = epochs
-    backup_updates = updates
     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
     if scheduler is not None:
         backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
@@ -110,7 +106,6 @@ def main(cfg):
             'model': model.state_dict(),
             'steps': steps,
             'epochs': epochs,
-            'updates': updates,
             'optimizer': optimizer.state_dict(),
             'scheduler': scheduler.state_dict() if scheduler is not None else None,
             'hidden': model.get_hidden(),
@@ -123,7 +118,6 @@ def main(cfg):
             'model': backup_model_state_dict,
             'steps': backup_steps,
             'epochs': backup_epochs,
-            'updates': backup_updates,
             'optimizer': backup_optimizer_state_dict,
             'scheduler': backup_scheduler_state_dict if scheduler is not None else None,
             'hidden': backup_hidden,
@@ -149,7 +143,6 @@ def main(cfg):
                     backup_model_state_dict = copy.deepcopy(find_tensor_and_transfer(model.state_dict()))
                     backup_steps = steps
                     backup_epochs = epochs
-                    backup_updates = updates
                     backup_optimizer_state_dict = copy.deepcopy(find_tensor_and_transfer(optimizer.state_dict()))
                     if scheduler is not None:
                         backup_scheduler_state_dict = copy.deepcopy(find_tensor_and_transfer(scheduler.state_dict()))
@@ -171,9 +164,9 @@ def main(cfg):
                 loss_norm_acc.backward()
                 loss_sum += loss_norm_acc
 
-                if steps % cfg.train.num_acc == 0:
-                    if updates % cfg.train.log_every_n_updates == 0:
-                        logger.add_scalar("loss", loss_norm_acc, steps // cfg.train.num_acc)
+                if steps % cfg.train.num_acc == 0 and steps > last_steps:
+                    if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
+                        logger.add_scalar("loss", loss_sum, steps // cfg.train.num_acc)
                         logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps // cfg.train.num_acc)
                     loss_sum = 0
                     if cfg.train.grad_clip is not None:
@@ -182,7 +175,6 @@ def main(cfg):
                     if scheduler is not None:
                         scheduler.step()
                     optimizer.zero_grad()
-                    updates += 1
                 pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
                 steps += 1
             steps = 0
