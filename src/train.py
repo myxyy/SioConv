@@ -166,8 +166,8 @@ def main(cfg):
 
                 if steps % cfg.train.num_acc == 0 and steps > last_steps:
                     if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
-                        logger.add_scalar("loss", loss_sum, steps // cfg.train.num_acc)
-                        logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps // cfg.train.num_acc)
+                        logger.add_scalar("loss", loss_sum, steps)
+                        logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps)
                     loss_sum = 0
                     if cfg.train.grad_clip is not None:
                         nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
