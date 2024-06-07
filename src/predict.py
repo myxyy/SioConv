@@ -18,7 +18,7 @@ def main(cfg):
     vocab_size = tokenizer.vocab_size
     model = model(devices=devices, vocab_size=vocab_size)
     model.load_state_dict(ckpt['model'])
-    model.set_hidden(ckpt['hidden'])
+    hidden_init = ckpt['hidden']
     model.eval()
     context_len = cfg.predict.context_len
     out_length = cfg.predict.max_len
@@ -37,45 +37,41 @@ def main(cfg):
         prompt = torch.nn.functional.pad(prompt, (0, out_length-prompt_len), 'constant', 0)
 
         beam_width = 1
-        model.reset_hidden()
+        model.set_hidden(hidden_init)
+        #model.reset_hidden()
 
         current_len = 0
-        start = 0
         model.set_is_refresh(True)
         prompt_beam = prompt.repeat(beam_width, 1)
-        while current_len < prompt_len:
+        while current_len <= prompt_len:
             x = prompt_beam[:,current_len:current_len+context_len]
             x = x.long()
             if (prompt_len - current_len <= context_len):
-                model.set_is_refresh(False)
+                model.set_is_refresh(prompt_len - current_len == context_len)
                 predict_init = model(x) # (1, context_len, vocab_size)
                 #predict_init_i = predict_init.view(context_len, vocab_size)[prompt_len - current_len -1].topk(beam_width)
                 predict_init_i = torch.multinomial(nn.Softmax(dim=1)(predict_init[:,prompt_len-current_len-1,:]/temperature), 1)
                 prompt_beam[:,prompt_len] = predict_init_i
-                current_len = prompt_len
+                current_len = prompt_len + 1
             else:
                 model.set_is_refresh(True)
                 model(x)
                 current_len += context_len
-                start += context_len
 
         out_last = 0
 
         while current_len < out_length:
             model.set_is_refresh(current_len % context_len == 0)
-            x = prompt_beam[:,start:start+context_len]
+            complete_len = ((current_len-1) // context_len) * context_len
+            x = prompt_beam[:,complete_len:complete_len+context_len]
             x = x.long()
             predict_beam = model(x).to(devices[0])
-            #_, predict_beam_i = predict_beam[:,current_len-1-start,:].reshape(beam_width * vocab_size).topk(beam_width)
-            predict_beam_i = torch.multinomial(nn.Softmax(dim=1)(predict_beam[:,current_len-1-start,:]/temperature), 1)
-            #prompt_beam = prompt_beam[torch.div(predict_beam_i, vocab_size, rounding_mode='floor')]
-            #prompt_beam[:,current_len] = predict_beam_i % vocab_size 
+            predict_beam_i = torch.multinomial(nn.Softmax(dim=1)(predict_beam[:,current_len-complete_len-1,:]/temperature), 1)
             prompt_beam[:,current_len] = predict_beam_i
 
             predict = prompt_beam[0]
             predict = predict.cpu().numpy()
             chars = tokenizer.decode(predict[out_last:current_len+1].tolist())
-            
 
             if '\ufffd' not in chars:
                 print(chars, end='', flush=True)
@@ -99,13 +95,8 @@ def main(cfg):
                         break
                     else:
                         out_last_skip_error += 1
-                        
-
 
             current_len += 1
-
-            if current_len % context_len == 1 or context_len == 1:
-                start = start + context_len
 
         chars = tokenizer.decode(predict[out_last:].tolist())
         print(chars, end='', flush=True)
