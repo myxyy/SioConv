@@ -53,8 +53,6 @@ class SConvLayer(nn.Module):
         # inv_softplus_dt = torch.log(torch.exp(dt)-1) equals
         inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
         self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
-        self.last_conv = None # (batch, dim)
-        self.last_conv_init = nn.Parameter(torch.randn(num_head, dim//num_head))
         self.norm = nn.GroupNorm(num_head, num_head)
         self.is_refresh = True
         self.reset_parameters()
