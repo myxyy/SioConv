@@ -54,7 +54,6 @@ class HFDataset(Dataset):
         self.size = size
         self.transforms = transforms
 
-
         if tokenized_file_name is None:
             tokenized_text = None
         else:
@@ -88,3 +87,35 @@ class HFDataset(Dataset):
 
     def __len__(self) -> int:
         return (len(self.text)-1)//self.size
+
+class InterleaveHFDataset(Dataset):
+    def __init__(self, dataset_list, column_list, tokenizer, size, cache_dir=None, seed=0):
+        self.tokenizer = tokenizer
+        self.size = size
+        super().__init__()
+        if cache_dir is not None and os.path.isdir(cache_dir):
+            self.dataset = datasets.load_from_disk(cache_dir)
+        else:
+            normalized_dataset_list = []
+            probabilities = []
+            len_sum = 0
+            for dataset in dataset_list:
+                len_sum += len(dataset)
+            for i, dataset in enumerate(dataset_list):
+                dataset.remove_columns([column for column in dataset.column_names if column != column_list[i]])
+                if "text" not in dataset.column_names:
+                    dataset.rename_column(column_list[i], "text")
+                normalized_dataset_list.append(dataset)
+                probabilities.append(len(dataset) / len_sum)
+            self.dataset = datasets.interleave_datasets(normalized_dataset_list, probabilities=probabilities, stopping_strategy="all_exhausted", seed=seed)
+            if cache_dir is not None:
+                self.dataset.save_to_disk(cache_dir)
+
+    def __getitem__(self, index: int):
+        tokenized_data = self.tokenizer(self.dataset[index]["text"], padding="max_length", max_length=self.size+1, truncation=True)
+        input_ids = np.array(tokenized_data["input_ids"])
+        attention_mask = np.array(tokenized_data["attention_mask"])
+        return input_ids, attention_mask
+
+    def __len__(self):
+        return len(self.dataset)

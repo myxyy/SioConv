@@ -109,7 +109,7 @@ def main(cfg):
 
     while True:
         prompt = input('prompt:')
-        predict(tokenizer.bos_token + prompt)
+        predict(prompt)
         print('\n')
 
 if __name__ == '__main__':

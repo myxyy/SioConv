@@ -1,3 +1,2 @@
 _target_: transformers.AutoTokenizer.from_pretrained
 pretrained_model_name_or_path: elyza/ELYZA-japanese-Llama-2-7b-fast-instruct
-add_bos_token: false

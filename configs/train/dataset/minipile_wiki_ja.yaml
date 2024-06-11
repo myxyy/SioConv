@@ -1,0 +1,20 @@
+_target_: src.text_loader.InterleaveHFDataset
+dataset_list:
+  - _target_: datasets.load_dataset
+    path: "JeanKaddour/minipile"
+    cache_dir: "datasets"
+    split: "train"
+    trust_remote_code: true
+  - _target_: datasets.load_dataset
+    path: "graelo/wikipedia"
+    name: "20230901.ja"
+    cache_dir: "datasets"
+    split: "train"
+    trust_remote_code: true
+column_list:
+  - "text"
+  - "text"
+tokenizer: ${tokenizer}
+size: ${train.length}
+cache_dir: "datasets/minipile_wiki_ja"
+seed: 123

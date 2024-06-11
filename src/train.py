@@ -13,6 +13,7 @@ import copy
 from helper import calc_num_parameters
 from torch.utils.tensorboard import SummaryWriter
 import datetime
+from transformers import PreTrainedTokenizer
 
 @hydra.main(version_base=None, config_path="../configs/", config_name="config")
 def main(cfg):
@@ -20,7 +21,7 @@ def main(cfg):
     os.environ['MASTER_PORT'] = '29500'
     torch.distributed.rpc.init_rpc('worker', rank=0, world_size=1)
     transforms = torchvision.transforms.Compose([])
-    tokenizer = instantiate(cfg.tokenizer)
+    tokenizer: PreTrainedTokenizer = instantiate(cfg.tokenizer)
     vocab_size = tokenizer.vocab_size
     dataset = instantiate(cfg.train.dataset)
     ckpt_path = cfg.train.weight
@@ -152,14 +153,16 @@ def main(cfg):
                 if cfg.train.refresh_every_n_steps is not None and steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
 
-                text, text_next = batch
+                input_ids, attention_mask = batch
+                text, text_next, mask_next = input_ids[:cfg.train.length], input_ids[1:], attention_mask[1:]
                 text = text.to(devices[0])
                 text_next = text_next.to(devices[-1])
+                mask_next = mask_next.to(devices[-1])
                 text = text.long()
 
                 text_hat = model_pipe(text).local_value()
 
-                loss = nn.CrossEntropyLoss()(text_hat.view(-1,vocab_size), text_next.view(-1).long())
+                loss = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)(text_hat.view(-1,vocab_size), text_next.view(-1).long())
  
                 loss_norm_acc = loss / cfg.train.num_acc
                 loss_norm_acc.backward()
