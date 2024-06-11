@@ -54,11 +54,11 @@ class HFDataset(Dataset):
         self.size = size
         self.transforms = transforms
 
-        print('loading...')
 
         if tokenized_file_name is None:
             tokenized_text = None
         else:
+            print('loading...')
             tokenized_text = np.load(tokenized_file_name) if os.path.isfile(tokenized_file_name) else None
         
         if tokenized_text is None:
