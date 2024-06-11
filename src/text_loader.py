@@ -114,8 +114,8 @@ class InterleaveHFDataset(Dataset):
     def __getitem__(self, index: int):
         tokenized_data = self.tokenizer(self.dataset[index]["text"], padding="max_length", max_length=self.size+1, truncation=True)
         input_ids = np.array(tokenized_data["input_ids"])
-        attention_mask = np.array(tokenized_data["attention_mask"])
-        return input_ids, attention_mask
+        #attention_mask = np.array(tokenized_data["attention_mask"])
+        return input_ids[...,:self.size], input_ids[...,1:]
 
     def __len__(self):
         return len(self.dataset)

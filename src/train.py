@@ -132,11 +132,8 @@ def main(cfg):
     try:
         loss_sum = 0
         for _ in range(cfg.train.max_epochs - epochs):
-
-            dataloader = torch.utils.data.DataLoader([dataset[i] for i in range(cfg.train.batch_size_per_acc * steps, len(dataset))], batch_size=cfg.train.batch_size_per_acc, shuffle=False, num_workers=os.cpu_count(), pin_memory=True, drop_last=True)
-
-            pbar = tqdm(dataloader, initial=steps, total=total_steps)
-            for batch in pbar:
+            pbar = tqdm(range(total_steps-steps), initial=steps, total=total_steps)
+            for _ in pbar:
                 if steps > last_steps and steps % cfg.train.save_every_n_steps == 0:
                     save()
                     last_steps = steps
@@ -153,11 +150,9 @@ def main(cfg):
                 if cfg.train.refresh_every_n_steps is not None and steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
 
-                input_ids, attention_mask = batch
-                text, text_next, mask_next = input_ids[:cfg.train.length], input_ids[1:], attention_mask[1:]
-                text = text.to(devices[0])
-                text_next = text_next.to(devices[-1])
-                mask_next = mask_next.to(devices[-1])
+                text, text_next = dataset[cfg.train.batch_size_per_acc * steps:cfg.train.batch_size_per_acc * (steps+1)]
+                text = torch.from_numpy(text).to(devices[0])
+                text_next = torch.from_numpy(text_next).to(devices[-1])
                 text = text.long()
 
                 text_hat = model_pipe(text).local_value()
