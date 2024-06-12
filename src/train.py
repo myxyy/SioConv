@@ -125,7 +125,7 @@ def main(cfg):
             'log_dir': log_dir,
         }, cfg.train.weight)
 
-    model.set_is_refresh(True)
+    model.set_is_refresh(cfg.train.is_refresh)
 
     last_steps = steps
 
