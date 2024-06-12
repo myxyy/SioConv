@@ -54,7 +54,6 @@ class SConvLayer(nn.Module):
         inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
         self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
         self.norm = nn.GroupNorm(num_head, num_head)
-        self.is_refresh = True
         self.reset_parameters()
 
     def reset_parameters(self):

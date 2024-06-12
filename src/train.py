@@ -151,6 +151,8 @@ def main(cfg):
                     model.reset_hidden()
 
                 text, text_next = dataset[cfg.train.batch_size_per_acc * steps:cfg.train.batch_size_per_acc * (steps+1)]
+                #print(text)
+                #print(text_next)
                 text = torch.from_numpy(text).to(devices[0])
                 text_next = torch.from_numpy(text_next).to(devices[-1])
                 text = text.long()
