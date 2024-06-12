@@ -14,7 +14,7 @@ def main(cfg):
     devices = cfg.predict.devices
     ckpt = torch.load(cfg.predict.weight)
     tokenizer = instantiate(cfg.tokenizer)
-    model = instantiate(ckpt['model_config'])
+    model = instantiate(cfg.model)
     vocab_size = tokenizer.vocab_size
     model = model(devices=devices, vocab_size=vocab_size)
     model.load_state_dict(ckpt['model'])
@@ -37,8 +37,8 @@ def main(cfg):
         prompt = torch.nn.functional.pad(prompt, (0, out_length-prompt_len), 'constant', 0)
 
         beam_width = 1
-        model.set_hidden(hidden_init)
-        #model.reset_hidden()
+        #model.set_hidden(hidden_init)
+        model.reset_hidden()
 
         current_len = 0
         model.set_is_refresh(True)

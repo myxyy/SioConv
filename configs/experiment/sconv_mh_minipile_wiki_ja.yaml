@@ -17,3 +17,6 @@ train:
   log_dir: "logs/sconv_mh_minipile_ja/"
   pipeline_checkpoint: 'never'
   batch_size_per_acc: 5
+
+predict:
+  weight: "weight/weight_sconv_mh_minipile_ja.ckpt"

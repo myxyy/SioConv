@@ -136,7 +136,7 @@ def main(cfg):
             for _ in pbar:
                 if steps > last_steps and steps % cfg.train.save_every_n_steps == 0:
                     save()
-                    last_steps = steps
+                    #last_steps = steps
                 if steps % cfg.train.backup_every_n_steps == 0:
                     #print('backup...')
                     backup_model_state_dict = copy.deepcopy(find_tensor_and_transfer(model.state_dict()))
