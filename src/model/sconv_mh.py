@@ -5,13 +5,13 @@ import numpy as np
 import einops
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine=True):
+    def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine=True, device=None):
         super().__init__()
         self.normalized_shape = dim
         self.eps = eps
         self.elementwise_affine = elementwise_affine
         if self.elementwise_affine:
-            self.weight = nn.Parameter(torch.ones(dim))
+            self.weight = nn.Parameter(torch.ones(dim, device=device))
         else:
             self.weight = None
 
@@ -207,14 +207,14 @@ class SConvMH(nn.Module):
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
         self.block_list = nn.ModuleList([SConvBlock(dim, num_head, dim_ff_hidden, dropout, chunk_size, dtype) for _ in range(depth)])
-        self.layer_norm_last = nn.LayerNorm(dim, elementwise_affine=True, bias=True, device=devices[-1], dtype=dtype)
+        self.norm_last = RMSNorm(dim, device=devices[-1])
 
         self.token_in_out_parameter_corr = token_in_out_parameter_corr
         self.num_parameters_token_in = sum(p.numel() for p in self.token_in.parameters())
         self.num_parameters_per_block = sum(p.numel() for p in self.block_list[0].parameters())
-        self.num_parameters_layer_norm_last = sum(p.numel() for p in self.layer_norm_last.parameters())
+        self.num_parameters_norm_last = sum(p.numel() for p in self.norm_last.parameters())
         self.num_parameters_token_out = sum(p.numel() for p in self.token_out.parameters())
-        self.num_parameters = (self.num_parameters_per_block * depth) + self.num_parameters_layer_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out)
+        self.num_parameters = (self.num_parameters_per_block * depth) + self.num_parameters_norm_last + (self.num_parameters_token_in + self.num_parameters_token_out)
         self.out_only_device = out_only_device
 
         for i, block in enumerate(self.block_list):
@@ -229,7 +229,7 @@ class SConvMH(nn.Module):
             x = x.to(self.devices[self.device_index(i)])
             x = block(x)
         x = x.to(self.devices[-1])
-        x = self.layer_norm_last(x)
+        x = self.norm_last(x)
         x = self.token_out(x)
         return x 
 
@@ -264,7 +264,7 @@ class SConvMH(nn.Module):
         for blist in blistlist:
             mlist.append(nn.Sequential(*blist))
         mlist[0] = nn.Sequential(self.token_in, mlist[0])
-        mlist[-1] = nn.Sequential(mlist[-1], self.layer_norm_last, self.token_out)
+        mlist[-1] = nn.Sequential(mlist[-1], self.norm_last, self.token_out)
         return mlist
         
     
