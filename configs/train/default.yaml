@@ -7,7 +7,7 @@ backup_every_n_steps: 500
 is_refresh: false
 refresh_every_n_steps: null
 reset_steps: false
-log_every_n_updates: 1
+log_every_n_updates: 100
 defaults:
   - dataset: wiki_ja_hf.yaml
   - scheduler: inv_prop_decay.yaml
