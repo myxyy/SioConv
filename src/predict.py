@@ -73,6 +73,17 @@ def main(cfg):
 
             predict = prompt_beam[0]
             predict = predict.cpu().numpy()
+
+            chars = tokenizer.decode(predict[:current_len].tolist())
+            delimiter_ind = max(chars[out_last:].find(" "), chars[out_last:].find("\n")) + out_last
+            if delimiter_ind >= out_last:
+                print(chars[out_last:delimiter_ind+1], end='', flush=True)
+                out_last = delimiter_ind+1
+            elif len(chars[out_last:]) > 1:
+                print(chars[out_last:out_last+1], end='', flush=True)
+                out_last += 1
+
+            continue
             chars = tokenizer.decode(predict[out_last:current_len].tolist())
 
             if '\ufffd' not in chars:
@@ -99,7 +110,7 @@ def main(cfg):
                         out_last_skip_error += 1
 
         chars = tokenizer.decode(predict[out_last:].tolist(), clean_up_tokenization_spaces=True)
-        #print(chars, end='', flush=True)
+        print(chars, end='', flush=True)
 
 
         predict = prompt_beam[0]
