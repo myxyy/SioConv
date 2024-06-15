@@ -69,13 +69,15 @@ def main(cfg):
             predict_beam_i = torch.multinomial(nn.Softmax(dim=1)(predict_beam[:,current_len-complete_len-1,:]/temperature), 1)
             prompt_beam[:,current_len] = predict_beam_i
 
+            current_len += 1
+
             predict = prompt_beam[0]
             predict = predict.cpu().numpy()
-            chars = tokenizer.decode(predict[out_last:current_len+1].tolist())
+            chars = tokenizer.decode(predict[out_last:current_len].tolist())
 
             if '\ufffd' not in chars:
                 print(chars, end='', flush=True)
-                out_last = current_len + 1
+                out_last = current_len
             elif current_len - out_last > 16:
                 is_break = False
                 out_last_skip_error = out_last
@@ -96,10 +98,8 @@ def main(cfg):
                     else:
                         out_last_skip_error += 1
 
-            current_len += 1
-
-        chars = tokenizer.decode(predict[out_last:].tolist())
-        print(chars, end='', flush=True)
+        chars = tokenizer.decode(predict[out_last:].tolist(), clean_up_tokenization_spaces=True)
+        #print(chars, end='', flush=True)
 
 
         predict = prompt_beam[0]
