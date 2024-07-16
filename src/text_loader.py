@@ -38,7 +38,7 @@ class TextDataset(Dataset):
         self.text = text[0:text_num * self.size].reshape(text_num, self.size)
         self.text_next = text[1:text_num * self.size+1].reshape(text_num, self.size)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.text[index], self.text_next[index]
 
 
@@ -76,7 +76,7 @@ class HFDataset(Dataset):
         self.text = text[0:text_num * self.size].reshape(text_num, self.size)
         self.text_next = text[1:text_num * self.size+1].reshape(text_num, self.size)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.text[index], self.text_next[index]
 
     def __len__(self) -> int:
@@ -98,7 +98,7 @@ class InterleaveHFDataset(Dataset):
             for i, dataset in enumerate(dataset_list):
                 dataset.remove_columns([column for column in dataset.column_names if column != column_list[i]])
                 if "text" not in dataset.column_names:
-                    dataset.rename_column(column_list[i], "text")
+                    dataset = dataset.rename_column(column_list[i], "text")
                 normalized_dataset_list.append(dataset)
                 probabilities.append(len(dataset) / len_sum)
             self.dataset = datasets.interleave_datasets(normalized_dataset_list, probabilities=probabilities, stopping_strategy="all_exhausted", seed=seed)
@@ -107,6 +107,57 @@ class InterleaveHFDataset(Dataset):
 
     def __getitem__(self, index: int):
         tokenized_data = self.tokenizer(self.dataset[index]["text"], padding="max_length", max_length=self.size+1, truncation=True)
+        input_ids = np.array(tokenized_data["input_ids"])
+        #attention_mask = np.array(tokenized_data["attention_mask"])
+        return input_ids[...,:self.size], input_ids[...,1:]
+
+    def __len__(self):
+        return len(self.dataset)
+
+class InterleaveHFChatDataset(Dataset):
+    def __init__(self, dataset_list, column_list, chat_key_list, tokenizer, size, cache_dir=None, seed=0):
+        self.tokenizer = tokenizer
+        self.size = size
+        super().__init__()
+        if cache_dir is not None and os.path.isdir(cache_dir):
+            self.dataset = datasets.load_from_disk(cache_dir)
+        else:
+            normalized_dataset_list = []
+            probabilities = []
+            len_sum = 0
+            for dataset in dataset_list:
+                len_sum += len(dataset)
+            for i, dataset in enumerate(dataset_list):
+                dataset.remove_columns([column for column in dataset.column_names if column != column_list[i]])
+                if "text" not in dataset.column_names:
+                    dataset = dataset.rename_column(column_list[i], "text")
+                def extract_text(elem):
+                    text_list = []
+                    for text in elem["text"]:
+                        text_list.append(text[chat_key_list[i]])
+                    elem["text"] = text_list
+                    return elem
+                dataset = dataset.map(extract_text)
+                normalized_dataset_list.append(dataset)
+                probabilities.append(len(dataset) / len_sum)
+            self.dataset = datasets.interleave_datasets(normalized_dataset_list, probabilities=probabilities, stopping_strategy="all_exhausted", seed=seed)
+            if cache_dir is not None:
+                self.dataset.save_to_disk(cache_dir)
+
+    def __getitem__(self, index):
+        if isinstance(index, int):
+            concat_text = ""
+            for t in self.dataset[index]["text"]:
+                concat_text = concat_text + t + self.tokenizer.bos_token
+            tokenized_data = self.tokenizer(concat_text, padding="max_length", max_length=self.size+1, truncation=True)
+        else: # slice
+            concat_text_list = []
+            for text_list in self.dataset[index]["text"]:
+                concat_text = ""
+                for t in text_list:
+                    concat_text = concat_text + t + self.tokenizer.bos_token
+                concat_text_list.append(concat_text)
+            tokenized_data = self.tokenizer(concat_text_list, padding="max_length", max_length=self.size+1, truncation=True)
         input_ids = np.array(tokenized_data["input_ids"])
         #attention_mask = np.array(tokenized_data["attention_mask"])
         return input_ids[...,:self.size], input_ids[...,1:]

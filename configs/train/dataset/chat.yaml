@@ -1,0 +1,26 @@
+_target_: src.text_loader.InterleaveHFChatDataset
+dataset_list:
+  - _target_: datasets.load_dataset
+    path: "shi3z/ja_conv_wikipedia_llama2pro8b_30k"
+    cache_dir: "datasets"
+    split: "train"
+  - _target_: datasets.load_dataset
+    path: "shi3z/ja_conv_wikipedia_orion14B_100K"
+    cache_dir: "datasets"
+    split: "train"
+  - _target_: datasets.load_dataset
+    path: "HuggingFaceH4/ultrachat_200k"
+    cache_dir: "datasets"
+    split: "train_sft"
+column_list:
+  - "conversations"
+  - "conversations"
+  - "messages"
+chat_key_list:
+  - "value"
+  - "value"
+  - "content"
+tokenizer: ${tokenizer}
+size: ${train.length}
+cache_dir: "datasets/chat"
+seed: 123
