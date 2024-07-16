@@ -36,7 +36,6 @@ def main(cfg):
     def predict(prompt):
         prompt = torch.from_numpy(np.array(tokenizer.encode(prompt)).astype(int)).clone().to(devices[0])
         prompt_len = len(prompt)
-        input_len = len(tokenizer.decode(prompt))
         prompt = torch.nn.functional.pad(prompt, (0, out_length-prompt_len), 'constant', 0)
 
         beam_width = 1
@@ -60,7 +59,7 @@ def main(cfg):
                 model(x)
                 current_len += context_len
 
-        out_last = input_len
+        out_last = 0
 
         while current_len < out_length:
             model.set_is_refresh(current_len % context_len == 0)
@@ -78,7 +77,7 @@ def main(cfg):
             predict = prompt_beam[0]
             predict = predict.cpu().numpy()
 
-            chars = tokenizer.decode(predict[:current_len].tolist())
+            chars = tokenizer.decode(predict[prompt_len:current_len].tolist())
             #print(predict[0:current_len+10])
             #print(chars)
             delimiter_ind = max(chars[out_last:].find(" "), chars[out_last:].find("\n")) + out_last
@@ -89,7 +88,7 @@ def main(cfg):
                 print(chars[out_last:out_last+1], end='', flush=True)
                 out_last += 1
 
-        chars = tokenizer.decode(predict[:current_len-1].tolist(), clean_up_tokenization_spaces=True)[out_last:]
+        chars = tokenizer.decode(predict[prompt_len:current_len-1].tolist(), clean_up_tokenization_spaces=True)[out_last:]
         print(chars, end='', flush=True)
 
 
