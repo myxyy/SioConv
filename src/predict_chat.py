@@ -98,10 +98,14 @@ def main(cfg):
         return predict
 
     while True:
-        prompt = input('question:\n') + tokenizer.bos_token
-        print('\nanswer:')
-        predict(prompt)
-        print('\n')
+        prompt = input('Question:\n')
+        if prompt == "reset":
+            model.reset_hidden()
+            print("Reset hidden state\n")
+        else:
+            print('\nAnswer:')
+            predict(prompt + tokenizer.bos_token)
+            print('\n')
 
 if __name__ == '__main__':
     main()
