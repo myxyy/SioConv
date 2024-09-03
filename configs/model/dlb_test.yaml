@@ -1,0 +1,7 @@
+_target_: src.model.dlb.DLB
+_partial_: True
+dim: 16
+dim_hidden: 16
+depth: 1
+dim_ff_hidden: 16
+dropout: 0.1
