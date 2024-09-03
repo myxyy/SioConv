@@ -2,6 +2,7 @@ weight: "weight/weight.ckpt"
 context_len: 1
 max_len: 1024
 temperature: 1.0
+top_p: 1.0
 devices:
   - 'cuda:0'
   - 'cuda:1'

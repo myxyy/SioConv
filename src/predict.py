@@ -31,6 +31,15 @@ def main(cfg):
     num_parameters = calc_num_parameters(model)
     print(f"#parameter:{num_parameters}")
 
+    # https://gist.github.com/bsantraigi/5752667525d88d375207f099bd78818b
+    def topp(x, p):
+        xsv, xsi = torch.sort(x, descending=True)
+        i_to_remove = torch.cumsum(xsv, dim=-1) > p
+        i_to_remove[..., 1:] = i_to_remove[..., :-1].clone()
+        i_to_remove[..., 0] = False
+        xsv[i_to_remove] = 0
+        return torch.gather(xsv, -1, xsi.argsort(-1))
+
     def predict(prompt):
         prompt = torch.from_numpy(np.array(tokenizer.encode(prompt)).astype(int)).clone().to(devices[0])
         prompt_len = len(prompt)
@@ -50,7 +59,7 @@ def main(cfg):
                 model.set_is_refresh(prompt_len - current_len == context_len)
                 predict_init = model(x) # (1, context_len, vocab_size)
                 #predict_init_i = predict_init.view(context_len, vocab_size)[prompt_len - current_len -1].topk(beam_width)
-                predict_init_i = torch.multinomial(nn.Softmax(dim=1)(predict_init[:,prompt_len-current_len-1,:]/temperature), 1)
+                predict_init_i = torch.multinomial(topp(nn.Softmax(dim=1)(predict_init[:,prompt_len-current_len-1,:]/temperature), cfg.predict.top_p), 1)
                 prompt_beam[:,prompt_len] = predict_init_i
                 current_len = prompt_len + 1
             else:
@@ -66,7 +75,7 @@ def main(cfg):
             x = prompt_beam[:,complete_len:complete_len+context_len]
             x = x.long()
             predict_beam = model(x).to(devices[0])
-            predict_beam_i = torch.multinomial(nn.Softmax(dim=1)(predict_beam[:,current_len-complete_len-1,:]/temperature), 1)
+            predict_beam_i = torch.multinomial(topp(nn.Softmax(dim=1)(predict_beam[:,current_len-complete_len-1,:]/temperature), cfg.predict.top_p), 1)
             prompt_beam[:,current_len] = predict_beam_i
 
             current_len += 1
