@@ -1,0 +1,28 @@
+# @package _global_
+
+defaults:
+  - override /model: sconv_mh_middle
+#  - override /train/scheduler: lr_test
+  - override /train/scheduler: cyclic
+  - override /train/dataset: minipile_wiki_ja
+
+train:
+  weight: "weight/weight_sconv_mh_minipile_ja_middle.ckpt"
+  optimizer:
+    lr: 1e-7
+  log_every_n_updates: 100
+  scheduler:
+    base_lr: 3e-4
+    max_lr: 1e-3
+  log_dir: "logs/sconv_mh_minipile_ja_middle/"
+  pipeline_checkpoint: 'never'
+  batch_size_per_acc: 16
+  dtype: 
+    _target_: hydra.utils.get_object
+    path: torch.bfloat16
+
+predict:
+  weight: "weight/weight_sconv_mh_minipile_ja_middle.ckpt"
+  dtype: 
+    _target_: hydra.utils.get_object
+    path: torch.bfloat16

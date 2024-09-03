@@ -30,10 +30,12 @@ def main(cfg):
 
     print('loading model...')
 
+    model = instantiate(cfg.model)
+    model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
+    model.to(instantiate(cfg.train.dtype))
+
     if ckpt_path is not None:
         ckpt = torch.load(ckpt_path)
-        model = instantiate(cfg.model)
-        model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         model.load_state_dict(ckpt['model'])
         if cfg.train.reset_steps:
             epochs = 0
@@ -60,8 +62,6 @@ def main(cfg):
             model.set_hidden(ckpt['hidden'])
         del ckpt
     else:
-        model = instantiate(cfg.model)
-        model = model(devices=devices, vocab_size=vocab_size, out_only_device=cfg.train.out_only_device)
         epochs = 0
         steps = 0
         optimizer = instantiate(cfg.train.optimizer)
@@ -78,8 +78,6 @@ def main(cfg):
 
     total_steps = len(dataset) // cfg.train.batch_size_per_acc
     print(f'loaded. steps:{steps}/{total_steps} epochs:{epochs}/{cfg.train.max_epochs}')
-
-    dtype = model.dtype
 
     torch.cuda.empty_cache()
 

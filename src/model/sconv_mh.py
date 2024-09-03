@@ -25,11 +25,11 @@ class RMSNorm(nn.Module):
         return output
 
 class FFNSwiGLU(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: float, dtype):
+    def __init__(self, dim: int, dim_ff_hidden: float):
         super().__init__()
-        self.fc = nn.Linear(dim, dim_ff_hidden, dtype=dtype)
-        self.fc_act = nn.Linear(dim, dim_ff_hidden, dtype=dtype)
-        self.fc_out = nn.Linear(dim_ff_hidden, dim, dtype=dtype)
+        self.fc = nn.Linear(dim, dim_ff_hidden)
+        self.fc_act = nn.Linear(dim, dim_ff_hidden)
+        self.fc_out = nn.Linear(dim_ff_hidden, dim)
         self.act = nn.SiLU()
     def forward(self, x):
         x = self.fc(x) * self.act(self.fc_act(x))
@@ -37,7 +37,7 @@ class FFNSwiGLU(nn.Module):
         return x
 
 class SConvLayer(nn.Module):
-    def __init__(self, dim: int, num_head: int, dtype, a_init_range=(1,16), dt_init_range=(0.001,0.1)):
+    def __init__(self, dim: int, num_head: int, a_init_range=(1,16), dt_init_range=(0.001,0.1)):
         super().__init__()
         assert dim % num_head == 0, 'dim must be multiple of num_head'
         self.dim = dim
@@ -72,11 +72,9 @@ class SConvLayer(nn.Module):
         batch = x.shape[0]
         len = x.shape[1]
         dim = x.shape[2]
-        dtype = x.dtype
         num_head = self.num_head
         inner_dim = dim//num_head
 
-        x = x.to(torch.float)
         z = (self.fc_z(x) * self.act(self.fc_z_act(x))).view(batch, len, num_head, inner_dim) # (batch, len, num_head, inner_dim)
 
         ln_da = - torch.exp(self.ln_a) * F.softplus(self.fc_dt(x)) # (batch, len, num_head)
@@ -96,12 +94,12 @@ class SConvLayer(nn.Module):
 
         h_norm = self.norm(h.view(batch*len, num_head, inner_dim)).view(batch, len, dim)
         y = self.fc_y(h_norm) * self.act(self.fc_y_act(x))
-        return y.to(dtype), hidden_next
+        return y, hidden_next
 
 class ChunkWiseSConvLayer(nn.Module):
-    def __init__(self, dim: int, num_head: int, chunk_size: int, dtype):
+    def __init__(self, dim: int, num_head: int, chunk_size: int):
         super().__init__()
-        self.sconv = SConvLayer(dim, num_head, dtype)
+        self.sconv = SConvLayer(dim, num_head)
         self.last_hidden = None
         self.last_hidden_init = nn.Parameter(torch.randn(num_head, dim//num_head))
         self.is_refresh = True
@@ -143,11 +141,10 @@ class ChunkWiseSConvLayer(nn.Module):
         self.last_hidden = hidden
 
 class SConvBlock(nn.Module):
-    def __init__(self, dim: int, num_head: int, dim_ff_hidden: int, dropout: float, chunk_size: int, dtype):
+    def __init__(self, dim: int, num_head: int, dim_ff_hidden: int, dropout: float, chunk_size: int):
         super().__init__()
-        self.dtype = dtype 
-        self.sconv = ChunkWiseSConvLayer(dim, num_head, chunk_size, dtype)
-        self.ffn = FFNSwiGLU(dim, dim_ff_hidden, dtype)
+        self.sconv = ChunkWiseSConvLayer(dim, num_head, chunk_size)
+        self.ffn = FFNSwiGLU(dim, dim_ff_hidden)
         self.norm_sconv = RMSNorm(dim)
         self.norm_ffn = RMSNorm(dim)
         self.dropout = nn.Dropout(dropout)
@@ -190,17 +187,15 @@ class SConvMH(nn.Module):
         vocab_size: int,
         devices,
         chunk_size: int=512,
-        dtype=torch.float,
         token_in_out_parameter_corr = 3.0,
         out_only_device: bool=True,
     ):
         super().__init__()
         self.devices = devices
-        self.dtype = dtype
         self.vocab_size = vocab_size
-        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1, dtype=dtype)
-        self.token_out = nn.Linear(dim, vocab_size, device=devices[-1], dtype=dtype)
-        self.block_list = nn.ModuleList([SConvBlock(dim, num_head, dim_ff_hidden, dropout, chunk_size, dtype) for _ in range(depth)])
+        self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1)
+        self.token_out = nn.Linear(dim, vocab_size, device=devices[-1])
+        self.block_list = nn.ModuleList([SConvBlock(dim, num_head, dim_ff_hidden, dropout, chunk_size) for _ in range(depth)])
         self.norm_last = RMSNorm(dim, device=devices[-1])
 
         self.token_in_out_parameter_corr = token_in_out_parameter_corr

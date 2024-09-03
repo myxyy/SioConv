@@ -17,12 +17,12 @@ def main(cfg):
     model = instantiate(cfg.model)
     vocab_size = tokenizer.vocab_size
     model = model(devices=devices, vocab_size=vocab_size)
+    model.to(instantiate(cfg.predict.dtype))
     model.load_state_dict(ckpt['model'])
     hidden_init = ckpt['hidden']
     model.eval()
     context_len = cfg.predict.context_len
     out_length = cfg.predict.max_len
-    dtype = model.dtype
     temperature = cfg.predict.temperature
 
     del ckpt

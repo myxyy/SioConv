@@ -2,9 +2,7 @@ _target_: src.model.sconv_mh.SConvMH
 _partial_: True
 dim: 4096
 num_head: 16
-depth: 24
+depth: 36
 dim_ff_hidden: 8192
 dropout: 0.1
-dtype:
-  _target_: hydra.utils.get_object
-  path: torch.float
+chunk_size: 256
