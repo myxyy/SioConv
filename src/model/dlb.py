@@ -101,11 +101,58 @@ class PeepholeLSTM(nn.Module):
         self.last_hidden = hidden[..., :self.hidden_dim] 
         self.last_out = hidden[..., self.hidden_dim:] 
 
+class LSTM(nn.Module):
+    def __init__(self, dim, hidden_dim, a_init_range=(1,16), dt_init_range=(0.001,0.1)):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.lstm = nn.LSTM(dim, hidden_dim, batch_first=True, proj_size=dim)
+        self.last_hidden = None
+        self.last_hidden_init = nn.Parameter(torch.randn(hidden_dim))
+        self.last_out = None
+        self.last_out_init = nn.Parameter(torch.randn(dim))
+        self.act = nn.SiLU()
+        self.is_refresh = True
+
+    def forward(self, x):
+        batch, length, dim = x.shape
+        if self.last_hidden is None:
+            last_hidden = self.last_hidden_init.unsqueeze(0).expand(batch, self.hidden_dim)
+        else:
+            last_hidden = self.last_hidden.detach()
+        if self.last_out is None:
+            last_out = self.last_out_init.unsqueeze(0).expand(batch, dim)
+        else:
+            last_out = self.last_out.detach()
+        y, (next_out, next_hidden) = self.lstm(x, (last_out.unsqueeze(0), last_hidden.unsqueeze(0)))
+        next_out = next_out.squeeze(0)
+        next_hidden = next_hidden.squeeze(0)
+        if self.is_refresh:
+            self.last_hidden = next_hidden
+            self.last_out = next_out
+        return y
+
+    def reset_hidden(self):
+        self.last_hidden = None
+        self.last_out = None
+
+    def set_is_refresh(self, is_refresh):
+        self.is_refresh = is_refresh
+
+    def get_hidden(self):
+        if self.last_hidden is None:
+            return None
+        else:
+            return torch.cat((self.last_hidden, self.last_out), -1)
+
+    def set_hidden(self, hidden):
+        self.last_hidden = hidden[..., :self.hidden_dim] 
+        self.last_out = hidden[..., self.hidden_dim:] 
+
 
 class DLBBlock(nn.Module):
     def __init__(self, dim: int, hidden_dim: int, dim_ff_hidden: int, dropout: float):
         super().__init__()
-        self.plstm = PeepholeLSTM(dim, hidden_dim)
+        self.plstm = LSTM(dim, hidden_dim)
         self.ffn = FFNSwiGLU(dim, dim_ff_hidden)
         self.norm_sconv = RMSNorm(dim)
         self.norm_ffn = RMSNorm(dim)
