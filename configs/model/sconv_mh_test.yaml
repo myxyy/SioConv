@@ -1,0 +1,8 @@
+_target_: src.model.sconv_mh.SConvMH
+_partial_: True
+dim: 1024
+num_head: 8
+depth: 8
+dim_ff_hidden: 2048
+dropout: 0.1
+chunk_size: 256

@@ -163,10 +163,15 @@ def main(cfg):
                 loss_norm_acc.backward()
                 loss_sum += loss_norm_acc
 
+                grad_norm = torch.cat(
+                    [p.grad.flatten() for p in model.parameters() if p.grad is not None]
+                ).norm()
+
                 if steps % cfg.train.num_acc == 0 and steps > last_steps:
                     if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
                         logger.add_scalar("loss", loss_sum, steps)
                         logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps)
+                        logger.add_scalar("grad_norm", grad_norm, steps)
                     loss_sum = 0
                     if cfg.train.grad_clip is not None:
                         nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
@@ -174,7 +179,7 @@ def main(cfg):
                     if scheduler is not None:
                         scheduler.step()
                     optimizer.zero_grad()
-                pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
+                pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"], "grad_norm":grad_norm})
                 steps += 1
             steps = 0
             epochs += 1
