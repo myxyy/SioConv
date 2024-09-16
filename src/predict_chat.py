@@ -31,7 +31,10 @@ def main(cfg):
     num_parameters = calc_num_parameters(model)
     print(f"#parameter:{num_parameters}")
 
-    model.reset_hidden()
+    if cfg.predict.is_set_hidden:
+        model.set_hidden(hidden_init)
+    else:
+        model.reset_hidden()
 
     def topp(x, p):
         xsv, xsi = torch.sort(x, descending=True)
@@ -47,7 +50,6 @@ def main(cfg):
         prompt = torch.nn.functional.pad(prompt, (0, out_length-prompt_len), 'constant', 0)
 
         beam_width = 1
-        #model.set_hidden(hidden_init)
 
         current_len = 0
         model.set_is_refresh(True)
@@ -108,7 +110,10 @@ def main(cfg):
     while True:
         prompt = input('Question:\n')
         if prompt == "reset":
-            model.reset_hidden()
+            if cfg.predict.is_set_hidden:
+                model.set_hidden(hidden_init)
+            else:
+                model.reset_hidden()
             print("Reset hidden state\n")
         else:
             print('\nAnswer:')

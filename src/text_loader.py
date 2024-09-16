@@ -114,6 +114,58 @@ class InterleaveHFDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
+
+class ContinuousInterleaveHFDataset(Dataset):
+    def __init__(self, dataset_list, column_list, tokenizer, size, cache_path, dtype=np.uint16, seed=0):
+        self.tokenizer = tokenizer
+        self.size = size
+        super().__init__()
+        if os.path.isfile(cache_path):
+            self.array = np.memmap(cache_path, dtype=dtype, mode="r")
+        else:
+            normalized_dataset_list = []
+            probabilities = []
+            len_sum = 0
+            for dataset in dataset_list:
+                len_sum += len(dataset)
+            for i, dataset in enumerate(dataset_list):
+                dataset.remove_columns([column for column in dataset.column_names if column != column_list[i]])
+                if "text" not in dataset.column_names:
+                    dataset = dataset.rename_column(column_list[i], "text")
+                normalized_dataset_list.append(dataset)
+                probabilities.append(len(dataset) / len_sum)
+            dataset_merge = datasets.interleave_datasets(normalized_dataset_list, probabilities=probabilities, stopping_strategy="all_exhausted", seed=seed)
+
+            print("counting...")
+            length_sum = 0
+            for data in tqdm(dataset_merge):
+                tokenized_data = self.tokenizer(data["text"])["input_ids"]
+                length_sum += len(tokenized_data)
+
+            self.array = np.memmap(cache_path, dtype=dtype, mode="w+", shape=(length_sum,))
+
+            print("writing...")
+            start_index = 0
+            for data in tqdm(dataset_merge):
+                tokenized_data = self.tokenizer(data["text"])["input_ids"]
+                tokenized_data = np.array(tokenized_data).astype(dtype)
+
+                self.array[start_index:start_index+len(tokenized_data)] = tokenized_data
+                start_index += len(tokenized_data)
+
+    def __getitem__(self, index: int|slice):
+        if type(index) == int:
+            x = self.array[index * self.size    : index * self.size + self.size    ].astype(np.int64)
+            y = self.array[index * self.size + 1: index * self.size + self.size + 1].astype(np.int64)
+        else: # slice
+            x = np.array(self.array[index.start * self.size     : index.stop * self.size    ]).reshape(index.stop-index.start, self.size).astype(np.int64)
+            y = np.array(self.array[index.start * self.size + 1 : index.stop * self.size + 1]).reshape(index.stop-index.start, self.size).astype(np.int64)
+        return x, y
+
+    def __len__(self):
+        return (len(self.array) - 1) // self.size
+
+
 class InterleaveHFChatDataset(Dataset):
     def __init__(self, dataset_list, column_list, chat_key_list, tokenizer, size, cache_dir=None, seed=0):
         self.tokenizer = tokenizer
