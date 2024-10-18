@@ -1,0 +1,8 @@
+_target_: src.model.band_transformer.BandTransformer
+_partial_: True
+dim: 1024
+num_head: 8
+depth: 64
+dim_ff_hidden: 2048
+dropout: 0.1
+band_width: 8
