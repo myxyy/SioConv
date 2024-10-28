@@ -1,0 +1,14 @@
+_target_: src.text_loader.ContinuousInterleaveHFDataset
+dataset_list:
+  - _target_: datasets.load_dataset
+    path: "wikimedia/wikipedia"
+    name: "20231101.ja"
+    cache_dir: "datasets"
+    split: "train"
+    trust_remote_code: true
+column_list:
+  - "text"
+tokenizer: ${tokenizer}
+size: ${train.length}
+cache_path: "datasets/wiki_ja_cont.mmap"
+seed: 123

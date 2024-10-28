@@ -1,0 +1,11 @@
+_target_: src.model.diffusion_memory_transformer.DiffusionMemoryTransformer
+_partial_: True
+dim: 2048
+num_head: 8
+depth: 8
+dim_ff_hidden: 4096
+mem_size: 1024 
+mem_sample: 16
+mem_gamma: 0.9
+dropout: 0.1
+band_width: 4
