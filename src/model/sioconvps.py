@@ -45,12 +45,12 @@ class SioConvPSLayer(nn.Module):
         self.fc_y = nn.Linear(dim, dim)
         self.fc_y_act = nn.Linear(dim, dim)
         self.act = nn.SiLU()
-        self.ln_a = nn.Parameter(torch.log(torch.empty(dim).uniform_(*a_init_range)), requires_grad=False)
+        #self.ln_a = nn.Parameter(torch.log(torch.empty(dim).uniform_(*a_init_range)), requires_grad=False)
         self.fc_dt = nn.Linear(dim, dim)
         dt = torch.exp(torch.empty(dim).uniform_(np.log(dt_init_range[0]), np.log(dt_init_range[1])))
         # inv_softplus_dt = torch.log(torch.exp(dt)-1) equals
-        inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
-        self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
+        #inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
+        #self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
         self.norm = RMSNorm(dim)
         self.last_hidden = None
         self.last_hidden_init = nn.Parameter(torch.randn(dim)) 
@@ -65,18 +65,20 @@ class SioConvPSLayer(nn.Module):
         else:
             last_hidden = self.last_hidden.detach()
 
-        ln_z = self.fc_ln_z(x) * self.act(self.fc_ln_z_act(x)) # (batch, len, dim)
+        ln_z = -F.softplus(-self.fc_ln_z(x) * self.act(self.fc_ln_z_act(x))) # (batch, len, dim)
 
         #ln_da = - torch.exp(self.ln_a) * F.softplus(self.fc_dt(x)) # (batch, len, dim)
-        ln_da = - torch.exp(self.ln_a) * F.softplus(self.fc_dt(x)) # (batch, len, dim)
-        ln_da_cumsum = torch.cumsum(ln_da, dim=1)
+        ln_da = -F.softplus(-self.fc_dt(x)) # (batch, len, dim)
+        ln_z_da = ln_z + ln_da
+        ln_o_da = -F.softplus(self.fc_dt(x)) # (batch, len, dim)
+        ln_o_da_cumsum = torch.cumsum(ln_o_da, dim=1)
 
-        ln_z_ln_da_cumsum = ln_z - ln_da_cumsum # (batch, len, dim)
-        logcumsumexp_ln_z_ln_da_cumsum = torch.logcumsumexp(ln_z_ln_da_cumsum, dim=1) # (batch, len, dim)
+        ln_z_da_ln_o_da_cumsum = ln_z_da - ln_o_da_cumsum # (batch, len, dim)
+        logcumsumexp_ln_z_da_ln_o_da_cumsum = torch.logcumsumexp(ln_z_da_ln_o_da_cumsum, dim=1) # (batch, len, dim)
 
-        h_inner_chunk = torch.exp(logcumsumexp_ln_z_ln_da_cumsum + ln_da_cumsum) # (batch, len, dim)
+        h_inner_chunk = torch.exp(logcumsumexp_ln_z_da_ln_o_da_cumsum + ln_o_da_cumsum) # (batch, len, dim)
         
-        h_cross_chunk = torch.einsum("bld,bd->bld", torch.exp(ln_da_cumsum), last_hidden) # (batch, len, dim)
+        h_cross_chunk = torch.einsum("bld,bd->bld", torch.exp(ln_o_da_cumsum), last_hidden) # (batch, len, dim)
 
         h = h_inner_chunk + h_cross_chunk
 
