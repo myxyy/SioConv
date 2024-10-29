@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - override /model: sioconvps
+#  - override /train/scheduler: lr_test
+  - override /train/scheduler: cyclic
+  - override /train/dataset: minipile_wiki_ja
+
+train:
+  weight: "weight/weight_sioconvps_minipile_ja.ckpt"
+  optimizer:
+    lr: 1e-7
+  log_every_n_updates: 100
+  scheduler:
+    base_lr: 3e-4
+    max_lr: 1e-3
+  log_dir: "logs/sioconvps_minipile_wiki_ja/"
+  pipeline_checkpoint: 'never'
+  batch_size_per_acc: 8
+
+predict:
+  weight: "weight/weight_sioconvps_minipile_wiki_ja.ckpt"

@@ -1,0 +1,6 @@
+_target_: src.model.sioconvps.SioConvPS
+_partial_: True
+dim: 2048
+depth: 36
+dim_ff_hidden: 4096
+dropout: 0.1
