@@ -37,21 +37,14 @@ class FFNSwiGLU(nn.Module):
         return x
 
 class SioConvPSLayer(nn.Module):
-    def __init__(self, dim: int, a_init_range=(0.001,0.1), dt_init_range=(0.001,0.1)):
+    def __init__(self, dim: int):
         super().__init__()
         self.dim = dim
         self.fc_ln_z= nn.Linear(dim, dim)
-        self.fc_ln_z_act = nn.Linear(dim, dim)
         self.fc_y = nn.Linear(dim, dim)
         self.fc_y_act = nn.Linear(dim, dim)
         self.act = nn.SiLU()
-        #self.ln_a = nn.Parameter(torch.log(torch.empty(dim).uniform_(*a_init_range)), requires_grad=False)
         self.fc_dt = nn.Linear(dim, dim)
-        dt = torch.exp(torch.empty(dim).uniform_(np.log(dt_init_range[0]), np.log(dt_init_range[1])))
-        # inv_softplus_dt = torch.log(torch.exp(dt)-1) equals
-        #inv_softplus_dt = dt + torch.log(1-torch.exp(-dt))
-        #self.fc_dt.bias = nn.Parameter(inv_softplus_dt)
-        self.norm = RMSNorm(dim)
         self.last_hidden = None
         self.last_hidden_init = nn.Parameter(torch.randn(dim)) 
         self.is_refresh = True
@@ -65,9 +58,8 @@ class SioConvPSLayer(nn.Module):
         else:
             last_hidden = self.last_hidden.detach()
 
-        ln_z = -F.softplus(-self.fc_ln_z(x) * self.act(self.fc_ln_z_act(x))) # (batch, len, dim)
+        ln_z = -F.softplus(-self.fc_ln_z(x)) # (batch, len, dim)
 
-        #ln_da = - torch.exp(self.ln_a) * F.softplus(self.fc_dt(x)) # (batch, len, dim)
         ln_da = -F.softplus(-self.fc_dt(x)) # (batch, len, dim)
         ln_z_da = ln_z + ln_da
         ln_o_da = -F.softplus(self.fc_dt(x)) # (batch, len, dim)
@@ -85,8 +77,7 @@ class SioConvPSLayer(nn.Module):
         if self.is_refresh:
             self.last_hidden = h[:,-1,:]
 
-        h_norm = self.norm(h)
-        y = self.fc_y(h_norm) * self.act(self.fc_y_act(x))
+        y = self.fc_y(h) * self.act(self.fc_y_act(x))
         return y
 
     def reset_hidden(self):
