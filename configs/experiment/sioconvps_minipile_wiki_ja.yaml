@@ -7,7 +7,7 @@ defaults:
   - override /train/dataset: minipile_wiki_ja
 
 train:
-  weight: "weight/weight_sioconvps_minipile_ja.ckpt"
+  weight: "weight/weight_sioconvps_minipile_wiki_ja.ckpt"
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
