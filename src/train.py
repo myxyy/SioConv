@@ -157,11 +157,11 @@ def main(cfg):
 
                 text_hat = model_pipe(text).local_value()
 
-                loss = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)(text_hat.view(-1,vocab_size), text_next.view(-1).long())
+                loss = nn.functional.cross_entropy(text_hat.view(-1,vocab_size), text_next.view(-1).long(), ignore_index=tokenizer.pad_token_id, reduction="mean")
  
-                loss_norm_acc = loss / cfg.train.num_acc
-                loss_norm_acc.backward()
-                loss_sum += loss_norm_acc
+                loss_norm = loss / cfg.train.num_acc
+                loss_norm.backward()
+                loss_sum += loss_norm
 
                 if steps % cfg.train.num_acc == 0 and steps > last_steps:
                     if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
