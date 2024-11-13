@@ -128,9 +128,11 @@ def main(cfg):
     last_steps = steps
 
     try:
-        loss_sum = 0
         for _ in range(cfg.train.max_epochs - epochs):
             pbar = tqdm(range(total_steps-steps), initial=steps, total=total_steps)
+            loss_sum = 0
+            previous_loss_sum = None
+            num_tokens = 0
             for _ in pbar:
                 if steps > last_steps and steps % cfg.train.save_every_n_steps == 0:
                     save()
@@ -147,6 +149,23 @@ def main(cfg):
 
                 if cfg.train.refresh_every_n_steps is not None and steps % cfg.train.refresh_every_n_steps == 0:
                     model.reset_hidden()
+                
+                if steps % cfg.train.num_acc == 0 and steps > last_steps:
+                    if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
+                        logger.add_scalar("loss", loss_sum, steps)
+                        logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps)
+                    previous_loss_sum = loss_sum
+                    loss_sum = 0
+                    if cfg.train.grad_clip is not None:
+                        nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+                    optimizer.step()
+                    if scheduler is not None:
+                        scheduler.step()
+                    optimizer.zero_grad()
+
+                if steps % cfg.train.num_acc == 0:
+                    _, text_next_acc = dataset[cfg.train.batch_size_per_acc * steps:cfg.train.batch_size_per_acc * (steps+cfg.train.num_acc)]
+                    num_tokens = (text_next_acc != tokenizer.pad_token_id).sum()
 
                 text, text_next = dataset[cfg.train.batch_size_per_acc * steps:cfg.train.batch_size_per_acc * (steps+1)]
                 #print(text)
@@ -157,24 +176,13 @@ def main(cfg):
 
                 text_hat = model_pipe(text).local_value()
 
-                loss = nn.functional.cross_entropy(text_hat.view(-1,vocab_size), text_next.view(-1).long(), ignore_index=tokenizer.pad_token_id, reduction="mean")
+                loss = nn.functional.cross_entropy(text_hat.view(-1,vocab_size), text_next.view(-1).long(), ignore_index=tokenizer.pad_token_id, reduction="sum")
  
-                loss_norm = loss / cfg.train.num_acc
+                loss_norm = loss / num_tokens
                 loss_norm.backward()
                 loss_sum += loss_norm
 
-                if steps % cfg.train.num_acc == 0 and steps > last_steps:
-                    if (steps // cfg.train.num_acc) % cfg.train.log_every_n_updates == 0:
-                        logger.add_scalar("loss", loss_sum, steps)
-                        logger.add_scalar("lr", optimizer.param_groups[0]["lr"], steps)
-                    loss_sum = 0
-                    if cfg.train.grad_clip is not None:
-                        nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
-                    optimizer.step()
-                    if scheduler is not None:
-                        scheduler.step()
-                    optimizer.zero_grad()
-                pbar.set_postfix({"loss":loss.item(), "lr":optimizer.param_groups[0]["lr"]})
+                pbar.set_postfix({"loss": "-" if previous_loss_sum is None else previous_loss_sum.item(), "loss_temp":loss_norm.item() * cfg.train.num_acc, "lr":optimizer.param_groups[0]["lr"]})
                 steps += 1
             steps = 0
             epochs += 1
