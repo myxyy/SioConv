@@ -1,0 +1,21 @@
+_target_: src.text_loader.InterleaveHFDataset
+dataset_list:
+  - _target_: datasets.load_dataset
+    path: "wikimedia/wikipedia"
+    name: "20231101.en"
+    cache_dir: "datasets"
+    split: "train"
+    trust_remote_code: true
+  - _target_: datasets.load_dataset
+    path: "wikimedia/wikipedia"
+    name: "20231101.ja"
+    cache_dir: "datasets"
+    split: "train"
+    trust_remote_code: true
+column_list:
+  - "text"
+  - "text"
+tokenizer: ${tokenizer}
+size: ${train.length}
+cache_dir: "datasets/wiki_en_ja"
+seed: 123
