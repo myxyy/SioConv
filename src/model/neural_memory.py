@@ -12,18 +12,6 @@ class NeuralMemory(nn.Module):
     def __init__(self, dim: int, dim_hidden: int, base_lr: float):
         super().__init__()
         self.base_lr = base_lr
-        self.W1 = None
-        self.b1 = None
-        self.W2 = None
-        self.b2 = None
-        self.W1_init = nn.Parameter(torch.randn(dim_hidden, dim) * dim_hidden ** -0.5)
-        self.b1_init = nn.Parameter(torch.zeros(dim_hidden))
-        self.W2_init = nn.Parameter(torch.randn(dim, dim_hidden) * dim ** -0.5)
-        self.b2_init = nn.Parameter(torch.zeros(dim))
-        self.momentum_W1_grad = None
-        self.momentum_b1_grad = None
-        self.momentum_W2_grad = None
-        self.momentum_b2_grad = None
         self.fc_query = nn.Linear(dim, dim)
         self.fc_key = nn.Linear(dim, dim)
         self.fc_value = nn.Linear(dim, dim)
@@ -31,32 +19,33 @@ class NeuralMemory(nn.Module):
         self.fc_momentum = nn.Linear(dim, 1)
         self.fc_weight_decay = nn.Linear(dim, 1)
 
-    def forward(self, x):
+        self.is_refresh = True
+
+    def forward(self, x, hidden):
         batch, length, dim = x.shape
         query = self.fc_query(x)
         key = self.fc_key(x)
         value = self.fc_value(x)
 
-        if self.W1 is None:
-            self.W1 = einops.repeat(self.W1_init, "h d -> b h d", b=batch)
-            self.b1 = einops.repeat(self.b1_init, "h -> b h", b=batch)
-            self.W2 = einops.repeat(self.W2_init, "d h-> b d h", b=batch)
-            self.b2 = einops.repeat(self.b2_init, "d -> b d", b=batch)
-            self.momentum_W1_grad = torch.zeros_like(self.W1)
-            self.momentum_b1_grad = torch.zeros_like(self.b1)
-            self.momentum_W2_grad = torch.zeros_like(self.W2)
-            self.momentum_b2_grad = torch.zeros_like(self.b2)
+        W1 = hidden["W1"]
+        b1 = hidden["b1"]
+        W2 = hidden["W2"]
+        b2 = hidden["b2"]
+        momentum_W1_grad = hidden["momentum_W1_grad"]
+        momentum_b1_grad = hidden["momentum_b1_grad"]
+        momentum_W2_grad = hidden["momentum_W2_grad"]
+        momentum_b2_grad = hidden["momentum_b2_grad"]
 
         X1 = key # (batch, length, dim)
-        Z1 = torch.einsum("bhd,bld->blh", self.W1, X1) + self.b1 # (batch, length, dim_hidden)
+        Z1 = torch.einsum("bhd,bld->blh", W1, X1) + b1 # (batch, length, dim_hidden)
         X2 = F.silu(Z1) # (batch, length, dim_hidden)
-        Z2 = torch.einsum("bdh,blh->bld", self.W2, X2) + self.b2 # (batch, length, dim)
+        Z2 = torch.einsum("bdh,blh->bld", W2, X2) + b2 # (batch, length, dim)
 
         # loss = 0.5 * ((value - Z2) ** 2)
         grad_Z2 = Z2 - value # (batch, length, dim)
         grad_b2 = grad_Z2 # (batch, length, dim)
         grad_W2 = torch.einsum("bld,blh->bldh", grad_Z2, X2) # (batch, length, dim, dim_hidden)
-        grad_X2 = torch.einsum("bld,bdh->blh", grad_Z2, self.W2) # (batch, length, dim_hidden)
+        grad_X2 = torch.einsum("bld,bdh->blh", grad_Z2, W2) # (batch, length, dim_hidden)
         grad_Z1 = grad_X2 * silu_backward(Z1) # (batch, length, dim_hidden)
         grad_b1 = grad_Z1 # (batch, length, dim_hidden)
         grad_W1 = torch.einsum("blh,bld->blhd", grad_Z1, X1) # (batch, length, dim_hidden, dim)
@@ -83,10 +72,10 @@ class NeuralMemory(nn.Module):
         log_momentum_cumsum = torch.cumsum(log_momentum, dim=1) # (batch, length)
         momentum_cumsum = torch.exp(log_momentum_cumsum) # (batch, length)
 
-        momentum_grad_W1_lr_cross_chunk = torch.einsum("bl,bhd->blhd", momentum_cumsum, self.momentum_W1_grad) # (batch, length, dim_hidden, dim)
-        momentum_grad_b1_lr_cross_chunk = torch.einsum("bl,bh->blh", momentum_cumsum, self.momentum_b1_grad) # (batch, length, dim_hidden)
-        momentum_grad_W2_lr_cross_chunk = torch.einsum("bl,bdh->bldh", momentum_cumsum, self.momentum_W2_grad) # (batch, length, dim, dim_hidden)
-        momentum_grad_b2_lr_cross_chunk = torch.einsum("bl,bd->bld", momentum_cumsum, self.momentum_b2_grad) # (batch, length, dim)
+        momentum_grad_W1_lr_cross_chunk = torch.einsum("bl,bhd->blhd", momentum_cumsum, momentum_W1_grad) # (batch, length, dim_hidden, dim)
+        momentum_grad_b1_lr_cross_chunk = torch.einsum("bl,bh->blh", momentum_cumsum, momentum_b1_grad) # (batch, length, dim_hidden)
+        momentum_grad_W2_lr_cross_chunk = torch.einsum("bl,bdh->bldh", momentum_cumsum, momentum_W2_grad) # (batch, length, dim, dim_hidden)
+        momentum_grad_b2_lr_cross_chunk = torch.einsum("bl,bd->bld", momentum_cumsum, momentum_b2_grad) # (batch, length, dim)
 
         momentum_grad_W1_lr = momentum_grad_W1_lr_inner_chunk - momentum_grad_W1_lr_cross_chunk # (batch, length, dim_hidden, dim)
         momentum_grad_b1_lr = momentum_grad_b1_lr_inner_chunk - momentum_grad_b1_lr_cross_chunk # (batch, length, dim_hidden)
@@ -106,10 +95,10 @@ class NeuralMemory(nn.Module):
         log_weight_decay_cumsum = torch.cumsum(log_weight_decay, dim=1) # (batch, length)
         weight_decay_cumsum = torch.exp(log_weight_decay_cumsum) # (batch, length)
 
-        W1_progress_cross_chunk = torch.einsum("bl,bhd->blhd", weight_decay_cumsum, self.W1) # (batch, length, dim_hidden, dim)
-        b1_progress_cross_chunk = torch.einsum("bl,bh->blh", weight_decay_cumsum, self.b1) # (batch, length, dim_hidden)
-        W2_progress_cross_chunk = torch.einsum("bl,bdh->bldh", weight_decay_cumsum, self.W2) # (batch, length, dim, dim_hidden)
-        b2_progress_cross_chunk = torch.einsum("bl,bd->bld", weight_decay_cumsum, self.b2) # (batch, length, dim)
+        W1_progress_cross_chunk = torch.einsum("bl,bhd->blhd", weight_decay_cumsum, W1) # (batch, length, dim_hidden, dim)
+        b1_progress_cross_chunk = torch.einsum("bl,bh->blh", weight_decay_cumsum, b1) # (batch, length, dim_hidden)
+        W2_progress_cross_chunk = torch.einsum("bl,bdh->bldh", weight_decay_cumsum, W2) # (batch, length, dim, dim_hidden)
+        b2_progress_cross_chunk = torch.einsum("bl,bd->bld", weight_decay_cumsum, b2) # (batch, length, dim)
 
         W1_progress = W1_progress_inner_chunk + W1_progress_cross_chunk # (batch, length, dim_hidden, dim)
         b1_progress = b1_progress_inner_chunk + b1_progress_cross_chunk # (batch, length, dim_hidden)
@@ -121,18 +110,80 @@ class NeuralMemory(nn.Module):
         Xq2 = F.silu(Zq1) # (batch, length, dim_hidden)
         Zq2 = torch.einsum("bldh,blh->bld", W2_progress, Xq2) + b2_progress # (batch, length, dim)
 
-        self.W1 = W1_progress[:,-1,:,:]
-        self.b1 = b1_progress[:,-1,:]
-        self.W2 = W2_progress[:,-1,:,:]
-        self.b2 = b2_progress[:,-1,:]
-        self.momentum_W1_grad = momentum_grad_W1_lr[:,-1,:,:]
-        self.momentum_b1_grad = momentum_grad_b1_lr[:,-1,:]
-        self.momentum_W2_grad = momentum_grad_W2_lr[:,-1,:,:]
-        self.momentum_b2_grad = momentum_grad_b2_lr[:,-1,:]
+        next_hidden = {
+            "W1": W1_progress[:,-1,:,:],
+            "b1": b1_progress[:,-1,:],
+            "W2": W2_progress[:,-1,:,:],
+            "b2": b2_progress[:,-1,:],
+            "momentum_W1_grad": momentum_grad_W1_lr[:,-1,:,:],
+            "momentum_b1_grad": momentum_grad_b1_lr[:,-1,:],
+            "momentum_W2_grad": momentum_grad_W2_lr[:,-1,:,:],
+            "momentum_b2_grad": momentum_grad_b2_lr[:,-1,:],
+        }
 
-        return Zq2
+        return Zq2, next_hidden
 
+class ChunkwiseNeuralMemory(nn.Module):
+    def __init__(self, dim: int, dim_hidden: int, base_lr: float, chunk_size: int):
+        super().__init__()
+        self.memory = NeuralMemory(dim, dim_hidden, base_lr)
+        self.chunk_size = chunk_size
+        self.last_hidden = None
+        self.W1 = None
+        self.b1 = None
+        self.W2 = None
+        self.b2 = None
+        self.W1_init = nn.Parameter(torch.randn(dim_hidden, dim) * dim_hidden ** -0.5)
+        self.b1_init = nn.Parameter(torch.zeros(dim_hidden))
+        self.W2_init = nn.Parameter(torch.randn(dim, dim_hidden) * dim ** -0.5)
+        self.b2_init = nn.Parameter(torch.zeros(dim))
+        self.momentum_W1_grad = None
+        self.momentum_b1_grad = None
+        self.momentum_W2_grad = None
+        self.momentum_b2_grad = None
+        self.is_refresh = True
 
+    def forward(self, x):
+        batch, length, dim = x.shape
 
+        if self.last_hidden is None:
+            W1 = einops.repeat(self.W1_init, "h d -> b h d", b=batch)
+            b1 = einops.repeat(self.b1_init, "h -> b h", b=batch)
+            W2 = einops.repeat(self.W2_init, "d h -> b d h", b=batch)
+            b2 = einops.repeat(self.b2_init, "d -> b d", b=batch)
+            hidden = {
+                "W1": W1,
+                "b1": b1,
+                "W2": W2,
+                "b2": b2,
+                "momentum_W1_grad": torch.zeros_like(W1),
+                "momentum_b1_grad": torch.zeros_like(b1),
+                "momentum_W2_grad": torch.zeros_like(W2),
+                "momentum_b2_grad": torch.zeros_like(b2),
+            }
+        else:
+            hidden = {k: v.detach() for k, v in self.last_hidden.items()}
+        
+        input_chunks = x.split(self.chunk_size, dim=1)
+        output_chunks = []
 
+        for input_chunk in input_chunks:
+            output_chunk, hidden = self.memory(input_chunk, hidden)
+            output_chunks.append(output_chunk)
 
+        if self.is_refresh:
+            self.last_hidden = hidden
+
+        return torch.cat(output_chunks, dim=1)
+ 
+    def reset_hidden(self):
+        self.last_hidden = None
+
+    def set_is_refresh(self, is_refresh):
+        self.is_refresh = is_refresh
+
+    def get_hidden(self):
+        return self.last_hidden
+
+    def set_hidden(self, hidden):
+        self.last_hidden = hidden
