@@ -1,0 +1,22 @@
+# @package _global_
+
+defaults:
+  - override /model: neural_memory
+#  - override /train/scheduler: lr_test
+  - override /train/scheduler: cyclic
+  - override /train/dataset: natsume 
+
+train:
+  weight: "weight/weight_neural_memory_natsume.ckpt"
+  optimizer:
+    lr: 1e-7
+  log_every_n_updates: 100
+  scheduler:
+    base_lr: 3e-4
+    max_lr: 1e-3
+  log_dir: "logs/neural_memory_natsume/"
+  pipeline_checkpoint: 'never'
+  batch_size_per_acc: 8
+
+predict:
+  weight: "weight/weight_neural_memory_natsume.ckpt"
