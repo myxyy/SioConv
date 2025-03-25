@@ -9,8 +9,9 @@ def silu_backward(x):
     return F.silu(x) + F.sigmoid(x) * (1 - F.silu(x))
 
 class NeuralMemory(nn.Module):
-    def __init__(self, dim: int, dim_hidden: int):
+    def __init__(self, dim: int, dim_hidden: int, base_lr: float):
         super().__init__()
+        self.base_lr = base_lr
         self.W1 = None
         self.b1 = None
         self.W2 = None
@@ -60,15 +61,18 @@ class NeuralMemory(nn.Module):
         grad_b1 = grad_Z1 # (batch, length, dim_hidden)
         grad_W1 = torch.einsum("blh,bld->blhd", grad_Z1, X1) # (batch, length, dim_hidden, dim)
 
-        lr = F.softplus(self.fc_lr(x).squeeze(-1)) # (batch, length)
+        lr = F.softplus(self.fc_lr(x).squeeze(-1) + np.log(np.expm1(self.base_lr))) # (batch, length)
         grad_W1_lr = torch.einsum("blhd,bl->blhd", grad_W1, lr) # (batch, length, dim_hidden, dim)
         grad_b1_lr = grad_b1 * lr.unsqueeze(-1) # (batch, length, dim_hidden)
         grad_W2_lr = torch.einsum("bldh,bl->bldh", grad_W2, lr) # (batch, length, dim, dim_hidden)
         grad_b2_lr = grad_b2 * lr.unsqueeze(-1) # (batch, length, dim)
 
-        log_momentum = -F.softplus(-self.fc_momentum(x).squeeze(-1)) # (batch, length)
+        fc_momentum = self.fc_momentum(x).squeeze(-1) # (batch, length)
+        log_momentum = -F.softplus(-fc_momentum) # (batch, length)
         log_momentum_masked = einops.repeat(log_momentum, "b l -> b l m", m=length).tril(-1) # (batch, length, length)
         log_momentum_masked_cumsum = torch.cumsum(log_momentum_masked, dim=1) # (batch, length, length)
+        log_om_momentum = -F.softplus(fc_momentum) # (batch, length)
+        log_momentum_masked += log_om_momentum[:,:,None] # (batch, length, length)
         momentum_masked_cumsum = torch.exp(log_momentum_masked_cumsum).tril() # (batch, length, length)
 
         momentum_grad_W1_lr_inner_chunk = torch.einsum("blm,bmhd->blhd", momentum_masked_cumsum, grad_W1_lr) # (batch, length, dim_hidden, dim)
