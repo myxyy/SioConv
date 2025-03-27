@@ -200,11 +200,10 @@ class NeuralMemory(nn.Module):
 
         return Zq2, next_hidden
 
-class ChunkwiseNeuralMemory(nn.Module):
-    def __init__(self, dim: int, dim_hidden: int, base_lr: float, chunk_size: int):
+class NeuralMemoryWrapper(nn.Module):
+    def __init__(self, dim: int, dim_hidden: int, base_lr: float):
         super().__init__()
         self.memory = NeuralMemory(dim, dim_hidden, base_lr)
-        self.chunk_size = chunk_size
         self.last_hidden = None
         self.W1 = None
         self.b1 = None
@@ -241,17 +240,12 @@ class ChunkwiseNeuralMemory(nn.Module):
         else:
             hidden = {k: v.detach() for k, v in self.last_hidden.items()}
         
-        input_chunks = x.split(self.chunk_size, dim=1)
-        output_chunks = []
-
-        for input_chunk in input_chunks:
-            output_chunk, hidden = self.memory(input_chunk, hidden)
-            output_chunks.append(output_chunk)
+        y, hidden = self.memory(x, hidden)
 
         if self.is_refresh:
             self.last_hidden = hidden
 
-        return torch.cat(output_chunks, dim=1)
+        return y
  
     def reset_hidden(self):
         self.last_hidden = None
@@ -266,9 +260,9 @@ class ChunkwiseNeuralMemory(nn.Module):
         self.last_hidden = hidden
 
 class NeuralMemoryBlock(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, base_lr: float, dropout: float, chunk_size: int):
+    def __init__(self, dim: int, dim_ff_hidden: int, base_lr: float, dropout: float):
         super().__init__()
-        self.memory = ChunkwiseNeuralMemory(dim, dim_ff_hidden, base_lr, chunk_size)
+        self.memory = NeuralMemoryWrapper(dim, dim_ff_hidden, base_lr)
         self.ffn = FFNSwiGLU(dim, dim_ff_hidden)
         self.norm_memory = RMSNorm(dim)
         self.norm_ffn = RMSNorm(dim)
@@ -311,7 +305,6 @@ class NeuralMemoryLM(nn.Module):
         dropout: float,
         vocab_size: int,
         devices,
-        chunk_size: int=512,
         token_in_out_parameter_corr = 3.0,
         out_only_device: bool=True,
     ):
@@ -320,7 +313,7 @@ class NeuralMemoryLM(nn.Module):
         self.vocab_size = vocab_size
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1])
-        self.block_list = nn.ModuleList([NeuralMemoryBlock(dim, dim_ff_hidden, base_lr, dropout, chunk_size) for _ in range(depth)])
+        self.block_list = nn.ModuleList([NeuralMemoryBlock(dim, dim_ff_hidden, base_lr, dropout) for _ in range(depth)])
         self.norm_last = RMSNorm(dim, device=devices[-1])
 
         self.token_in_out_parameter_corr = token_in_out_parameter_corr

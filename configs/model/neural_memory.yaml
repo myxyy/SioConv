@@ -5,4 +5,3 @@ base_lr: 0.001
 depth: 8
 dim_ff_hidden: 512
 dropout: 0.1
-chunk_size: 64
