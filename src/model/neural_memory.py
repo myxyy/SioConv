@@ -52,10 +52,17 @@ def scan(a, b):
     a_next = a_odd * a_even
     b_next = a_even * b_even + b_odd
     b_new = b.clone()
-    b_new[:,1::2] = scan(a_next, b_next)
+    mask_odd = torch.zeros(length, device=a.device)
+    mask_odd[1::2] = 1
+    mask_odd = mask_odd[None,:]
+    b_new = b * (1-mask_odd)
+    b_new += F.pad(scan(a_next, b_next).repeat_interleave(2, dim=1), (0,1) if is_odd else (0,0), value=0) * mask_odd
     b_odd_new = b_new[:,1:None if is_odd else -1:2]
     a_even_new = a[:,2::2]
-    b_new[:,2::2] += a_even_new * b_odd_new
+    mask_even = torch.zeros(length, device=a.device)
+    mask_even[2::2] = 1
+    mask_even = mask_even[None,:]
+    b_new = b_new + F.pad((a_even_new * b_odd_new).repeat_interleave(2, dim=1), (0,1) if is_odd else (0,2), value=0).roll(1, dims=1) * mask_even
     return b_new
 
 class NeuralMemory(nn.Module):
