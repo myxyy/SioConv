@@ -66,8 +66,9 @@ def scan(a, b):
     return b_new
 
 class NeuralMemory(nn.Module):
-    def __init__(self, dim: int, dim_hidden: int, base_lr: float):
+    def __init__(self, dim: int, dim_hidden:int, base_lr: float):
         super().__init__()
+        self.dim_hidden = dim_hidden
         self.base_lr = base_lr
         self.fc_query = nn.Linear(dim, dim)
         self.fc_key = nn.Linear(dim, dim)
@@ -79,6 +80,8 @@ class NeuralMemory(nn.Module):
         self.is_refresh = True
 
     def forward(self, x, hidden):
+        dim_hidden = self.dim_hidden
+
         batch, length, dim = x.shape
         query = self.fc_query(x)
         key = self.fc_key(x)
@@ -114,18 +117,25 @@ class NeuralMemory(nn.Module):
         grad_b2_lr = grad_b2 * lr.unsqueeze(-1) # (batch, length, dim)
 
         fc_momentum = self.fc_momentum(x).squeeze(-1) # (batch, length)
+
+        momentum_grad_W1_lr_inner_chunk = scan(
+            fc_momentum[:,:,None,None].expand(batch, length, dim_hidden, dim).transpose(3,1).reshape(-1,length),
+            grad_W1_lr.transpose(3,1).reshape(-1,length)
+        ).reshape(batch, dim, dim_hidden, length).transpose(3,1)
+        momentum_grad_b1_lr_inner_chunk = scan(
+            fc_momentum[:,:,None].expand(batch, length, dim_hidden).transpose(2,1).reshape(-1,length),
+            grad_b1_lr.transpose(2,1).reshape(-1,length)
+        ).reshape(batch, dim_hidden, length).transpose(2,1)
+        momentum_grad_W2_lr_inner_chunk = scan(
+            fc_momentum[:,:,None,None].expand(batch, length, dim, dim_hidden).transpose(3,1).reshape(-1,length),
+            grad_W2_lr.transpose(3,1).reshape(-1,length)
+        ).reshape(batch, dim_hidden, dim, length).transpose(3,1)
+        momentum_grad_b2_lr_inner_chunk = scan(
+            fc_momentum[:,:,None].expand(batch, length, dim).transpose(2,1).reshape(-1,length),
+            grad_b2_lr.transpose(2,1).reshape(-1,length)
+        ).reshape(batch, dim, length).transpose(2,1)
+
         log_momentum = -F.softplus(-fc_momentum) # (batch, length)
-        log_momentum_masked = einops.repeat(log_momentum, "b l -> b l m", m=length).tril(-1) # (batch, length, length)
-        log_momentum_masked_cumsum = torch.cumsum(log_momentum_masked, dim=1) # (batch, length, length)
-        log_om_momentum = -F.softplus(fc_momentum) # (batch, length)
-        log_momentum_masked += log_om_momentum[:,:,None] # (batch, length, length)
-        momentum_masked_cumsum = torch.exp(log_momentum_masked_cumsum).tril() # (batch, length, length)
-
-        momentum_grad_W1_lr_inner_chunk = torch.einsum("blm,bmhd->blhd", momentum_masked_cumsum, grad_W1_lr) # (batch, length, dim_hidden, dim)
-        momentum_grad_b1_lr_inner_chunk = torch.einsum("blm,bmh->blh", momentum_masked_cumsum, grad_b1_lr) # (batch, length, dim_hidden)
-        momentum_grad_W2_lr_inner_chunk = torch.einsum("blm,bmdh->bldh", momentum_masked_cumsum, grad_W2_lr) # (batch, length, dim, dim_hidden)
-        momentum_grad_b2_lr_inner_chunk = torch.einsum("blm,bmd->bld", momentum_masked_cumsum, grad_b2_lr) # (batch, length, dim)
-
         log_momentum_cumsum = torch.cumsum(log_momentum, dim=1) # (batch, length)
         momentum_cumsum = torch.exp(log_momentum_cumsum) # (batch, length)
 
@@ -139,16 +149,26 @@ class NeuralMemory(nn.Module):
         momentum_grad_W2_lr = momentum_grad_W2_lr_inner_chunk - momentum_grad_W2_lr_cross_chunk # (batch, length, dim, dim_hidden)
         momentum_grad_b2_lr = momentum_grad_b2_lr_inner_chunk - momentum_grad_b2_lr_cross_chunk # (batch, length, dim)
 
-        log_weight_decay = -F.softplus(self.fc_weight_decay(x).squeeze(-1)) # (batch, length)
-        log_weight_decay_masked = einops.repeat(log_weight_decay, "b l -> b l m", m=length).tril(-1) # (batch, length, length)
-        log_weight_decay_masked_cumsum = torch.cumsum(log_weight_decay_masked, dim=1) # (batch, length, length)
-        weight_decay_masked_cumsum = torch.exp(log_weight_decay_masked_cumsum).tril() # (batch, length, length)
+        weight_decay = self.fc_weight_decay(x).squeeze(-1)
 
-        W1_progress_inner_chunk = torch.einsum("blm,bmhd->blhd", weight_decay_masked_cumsum, momentum_grad_W1_lr) # (batch, length, dim_hidden, dim)
-        b1_progress_inner_chunk = torch.einsum("blm,bmh->blh", weight_decay_masked_cumsum, momentum_grad_b1_lr) # (batch, length, dim_hidden)
-        W2_progress_inner_chunk = torch.einsum("blm,bmdh->bldh", weight_decay_masked_cumsum, momentum_grad_W2_lr) # (batch, length, dim, dim_hidden)
-        b2_progress_inner_chunk = torch.einsum("blm,bmd->bld", weight_decay_masked_cumsum, momentum_grad_b2_lr) # (batch, length, dim)
+        W1_progress_inner_chunk = scan(
+            weight_decay[:,:,None,None].expand(batch, length, dim_hidden, dim).transpose(3,1).reshape(-1,length),
+            momentum_grad_W1_lr.transpose(3,1).reshape(-1,length)
+        ).reshape(batch, dim, dim_hidden, length).transpose(3,1)
+        b1_progress_inner_chunk = scan(
+            weight_decay[:,:,None].expand(batch, length, dim_hidden).transpose(2,1).reshape(-1,length),
+            momentum_grad_b1_lr.transpose(2,1).reshape(-1,length)
+        ).reshape(batch, dim_hidden, length).transpose(2,1)
+        W2_progress_inner_chunk = scan(
+            weight_decay[:,:,None,None].expand(batch, length, dim, dim_hidden).transpose(3,1).reshape(-1,length),
+            momentum_grad_W2_lr.transpose(3,1).reshape(-1,length)
+        ).reshape(batch, dim_hidden, dim, length).transpose(3,1)
+        b2_progress_inner_chunk = scan(
+            weight_decay[:,:,None].expand(batch, length, dim).transpose(2,1).reshape(-1,length),
+            momentum_grad_b2_lr.transpose(2,1).reshape(-1,length)
+        ).reshape(batch, dim, length).transpose(2,1)
 
+        log_weight_decay = -F.softplus(weight_decay) # (batch, length)
         log_weight_decay_cumsum = torch.cumsum(log_weight_decay, dim=1) # (batch, length)
         weight_decay_cumsum = torch.exp(log_weight_decay_cumsum) # (batch, length)
 
