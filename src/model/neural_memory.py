@@ -39,6 +39,25 @@ class FFNSwiGLU(nn.Module):
 def silu_backward(x):
     return F.silu(x) + F.sigmoid(x) * (1 - F.silu(x))
 
+# [a0, a1, a2, ...], [b0, b1, b2, ...] -> [b0, a1 * b0 + b1, a2 * a1 * b0 + a2 * b1, b2, ...]
+def scan(a, b):
+    _, length = a.shape
+    if length == 1:
+        return b
+    is_odd = length % 2 == 1
+    a_even = a[:,:-1 if is_odd else None:2]
+    a_odd = a[:,1::2]
+    b_even = b[:,:-1 if is_odd else None:2]
+    b_odd = b[:,1::2]
+    a_next = a_odd * a_even
+    b_next = a_even * b_even + b_odd
+    b_new = b.clone()
+    b_new[:,1::2] = scan(a_next, b_next)
+    b_odd_new = b_new[:,1:None if is_odd else -1:2]
+    a_even_new = a[:,2::2]
+    b_new[:,2::2] += a_even_new * b_odd_new
+    return b_new
+
 class NeuralMemory(nn.Module):
     def __init__(self, dim: int, dim_hidden: int, base_lr: float):
         super().__init__()
