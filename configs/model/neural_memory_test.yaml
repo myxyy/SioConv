@@ -3,7 +3,7 @@ _partial_: True
 dim: 1024
 base_lr: 0.001
 base_weight_decay: 0.01
-depth: 8
+depth: 16
 dim_ff_hidden: 2048
 chunk_size: 256
 dropout: 0.1

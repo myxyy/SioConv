@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - override /model: neural_memory
+  - override /model: neural_memory_test
 #  - override /train/scheduler: lr_test
   - override /train/scheduler: cyclic
   - override /train/dataset: natsume 
