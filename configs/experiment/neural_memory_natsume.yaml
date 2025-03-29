@@ -11,6 +11,7 @@ train:
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
+  refresh_every_n_steps: 4
   scheduler:
     base_lr: 3e-4
     max_lr: 1e-3
