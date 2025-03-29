@@ -17,6 +17,7 @@ train:
   log_dir: "logs/neural_memory_natsume/"
   pipeline_checkpoint: 'never'
   batch_size_per_acc: 8
+  max_epochs: 5
 
 predict:
   weight: "weight/weight_neural_memory_natsume.ckpt"
