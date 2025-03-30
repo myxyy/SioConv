@@ -36,7 +36,7 @@ class FFNSwiGLU(nn.Module):
         x = self.fc_out(x)
         return x
 
-class NeuralMemory(nn.Module):
+class SingleHeadNeuralMemory(nn.Module):
     def __init__(self, dim: int, dim_hidden:int, base_lr: float, base_weight_decay: float):
         super().__init__()
         self.log_base_lr = nn.Parameter(torch.tensor(np.log(base_lr)))
@@ -67,13 +67,49 @@ class NeuralMemory(nn.Module):
         W_next_cross_chunk = W_prev * weight_decay_cross_chunk[:,-1][:,None,None] # (batch, dim, dim_hidden)
         W_next = W_next_inner_chunk + W_next_cross_chunk # (batch, dim, dim_hidden)
         return y, W_next
-        
+ 
+class NeuralMemory(nn.Module):
+    def __init__(self, dim: int, dim_hidden:int, num_head: int, base_lr: float, base_weight_decay: float):
+        super().__init__()
+        self.num_head = num_head
+        self.dim_hidden = dim_hidden
+        self.log_base_lr = nn.Parameter(torch.ones(num_head) * np.log(base_lr))
+        self.log_base_weight_decay = nn.Parameter(torch.ones(num_head) * np.log(base_weight_decay))
+        self.linear_query = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
+        self.linear_key = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
+        self.linear_value = nn.Parameter(torch.randn(dim, dim) * dim ** -0.5)
+        self.fc_lr = nn.Linear(dim, num_head)
+        self.fc_weight_decay = nn.Linear(dim, num_head)
+
+    def forward(self, x, hidden):
+        batch, length, dim = x.shape
+        num_head = self.num_head
+        dim_hidden = self.dim_hidden
+        dim_head = self.dim_hidden // num_head
+        W_prev = hidden.view(batch, dim, num_head, dim_head).transpose(2,1) # (batch, num_head, dim, dim_head)
+        query = F.linear(x, self.linear_query).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
+        key = F.linear(x, self.linear_key).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
+        value = F.linear(x, self.linear_value) # (batch, length, dim)
+        lr = (torch.exp(self.log_base_lr) * F.sigmoid(self.fc_lr(x))).transpose(2,1) # (batch, num_head, length)
+        log_weight_decay = torch.log(torch.exp(self.log_base_weight_decay) * F.sigmoid(self.fc_weight_decay(x))).transpose(2,1) # (batch, num_head, length)
+        weight_decay_cross_chunk = torch.exp(torch.cumsum(log_weight_decay, dim=2)) # (batch, num_head, length)
+        weight_decay_inner_chunk = torch.exp(torch.cumsum(einops.repeat(log_weight_decay, "b n l -> b n m l", m=length).triu(1), dim=2)).triu() # (batch, num_head, length, length)
+        kq = torch.einsum("b n l d, b n m d -> b n l m", key, query) # (batch, num_head, length, length)
+        mask_kq = kq * weight_decay_inner_chunk # (batch, num_head, length, length)
+        WpK_V = torch.einsum("b n d h, b n l h -> b n l d", W_prev, key) - value.unsqueeze(1) # (batch, num_head, length, dim)
+        y_inner_chunk = -torch.einsum("b n l d, b n l, b n l m -> b l d", WpK_V, lr, mask_kq) # (batch, length, dim)
+        y_cross_chunk = torch.einsum("b n d h, b n l h, b n l -> b l d", W_prev, key, weight_decay_cross_chunk) # (batch, length, dim)
+        y = y_inner_chunk + y_cross_chunk # (batch, length, dim)
+        W_next_inner_chunk = -torch.einsum("b n l d, b n l, b n l h -> b n d h", WpK_V, lr * weight_decay_inner_chunk[:,:,:,-1], key).transpose(2,1).reshape(batch, dim, dim_hidden) # (batch, dim, dim_hidden)
+        W_next_cross_chunk = (W_prev * weight_decay_cross_chunk[:,:,-1][:,:,None,None]).transpose(2,1).reshape(batch, dim, dim_hidden) # (batch, dim, dim_hidden)
+        W_next = W_next_inner_chunk + W_next_cross_chunk # (batch, dim, dim_hidden)
+        return y, W_next
 
 class ChunkwiseNeuralMemory(nn.Module):
-    def __init__(self, dim: int, dim_hidden: int, base_lr: float, base_weight_decay: float, chunk_size: int):
+    def __init__(self, dim: int, dim_hidden: int, num_head: int, base_lr: float, base_weight_decay: float, chunk_size: int):
         super().__init__()
         self.chunk_size = chunk_size
-        self.memory = NeuralMemory(dim, dim_hidden, base_lr, base_weight_decay)
+        self.memory = NeuralMemory(dim, dim_hidden, num_head, base_lr, base_weight_decay)
         self.last_hidden = None
         self.W = None
         self.W_init = nn.Parameter(torch.randn(dim, dim_hidden) * dim_hidden ** -0.5)
@@ -111,9 +147,9 @@ class ChunkwiseNeuralMemory(nn.Module):
         self.last_hidden = hidden
 
 class NeuralMemoryBlock(nn.Module):
-    def __init__(self, dim: int, dim_ff_hidden: int, base_lr: float, base_weight_decay: float, chunk_size: int, dropout: float):
+    def __init__(self, dim: int, dim_ff_hidden: int, num_head: int, base_lr: float, base_weight_decay: float, chunk_size: int, dropout: float):
         super().__init__()
-        self.memory = ChunkwiseNeuralMemory(dim, dim_ff_hidden, base_lr, base_weight_decay, chunk_size)
+        self.memory = ChunkwiseNeuralMemory(dim, dim_ff_hidden, num_head, base_lr, base_weight_decay, chunk_size)
         self.ffn = FFNSwiGLU(dim, dim_ff_hidden)
         self.norm_memory = RMSNorm(dim)
         self.norm_ffn = RMSNorm(dim)
@@ -152,6 +188,7 @@ class NeuralMemoryLM(nn.Module):
         depth: int,
         dim: int,
         dim_ff_hidden: int,
+        num_head: int,
         base_lr: float,
         base_weight_decay: float,
         dropout: float,
@@ -166,7 +203,7 @@ class NeuralMemoryLM(nn.Module):
         self.vocab_size = vocab_size
         self.token_in = nn.Embedding(vocab_size, dim, device=devices[0], max_norm=1)
         self.token_out = nn.Linear(dim, vocab_size, device=devices[-1])
-        self.block_list = nn.ModuleList([NeuralMemoryBlock(dim, dim_ff_hidden, base_lr, base_weight_decay, chunk_size, dropout) for _ in range(depth)])
+        self.block_list = nn.ModuleList([NeuralMemoryBlock(dim, dim_ff_hidden, num_head, base_lr, base_weight_decay, chunk_size, dropout) for _ in range(depth)])
         self.norm_last = RMSNorm(dim, device=devices[-1])
 
         self.token_in_out_parameter_corr = token_in_out_parameter_corr
