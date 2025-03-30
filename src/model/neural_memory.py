@@ -40,21 +40,21 @@ class SingleHeadNeuralMemory(nn.Module):
     def __init__(self, dim: int, dim_hidden:int, base_lr: float, base_weight_decay: float):
         super().__init__()
         self.log_base_lr = nn.Parameter(torch.tensor(np.log(base_lr)))
-        self.log_base_weight_decay = nn.Parameter(torch.tensor(np.log(base_weight_decay)))
-        self.linear_query = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
-        self.linear_key = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
-        self.linear_value = nn.Parameter(torch.randn(dim, dim) * dim ** -0.5)
         self.fc_lr = nn.Linear(dim, 1)
+        self.log_base_weight_decay = nn.Parameter(torch.tensor(np.log(base_weight_decay)))
         self.fc_weight_decay = nn.Linear(dim, 1)
+        self.fc_query = nn.Linear(dim, dim_hidden)
+        self.fc_key = nn.Linear(dim, dim_hidden)
+        self.fc_value = nn.Linear(dim, dim)
 
     def forward(self, x, hidden):
         batch, length, dim = x.shape
         W_prev = hidden # (batch, dim, dim_hidden)
-        query = F.linear(x, self.linear_query) # (batch, length, dim_hidden)
-        key = F.linear(x, self.linear_key) # (batch, length, dim_hidden)
-        value = F.linear(x, self.linear_value) # (batch, length, dim_hidden)
+        query = self.fc_query(x) # (batch, length, dim_hidden)
+        key = self.fc_key(x) # (batch, length, dim_hidden)
+        value = self.fc_value(x) # (batch, length, dim_hidden)
         lr = torch.exp(self.log_base_lr) * F.sigmoid(self.fc_lr(x).squeeze(-1)) # (batch, length)
-        log_weight_decay = torch.log(torch.exp(self.log_base_weight_decay) * F.sigmoid(self.fc_weight_decay(x).squeeze(-1))) # (batch, length)
+        log_weight_decay = torch.log(1-torch.exp(self.log_base_weight_decay) * F.sigmoid(self.fc_weight_decay(x).squeeze(-1))) # (batch, length)
         weight_decay_cross_chunk = torch.exp(torch.cumsum(log_weight_decay, dim=1)) # (batch, length)
         weight_decay_inner_chunk = torch.exp(torch.cumsum(einops.repeat(log_weight_decay, "b l -> b m l", m=length).triu(1), dim=2)).triu() # (batch, length, length)
         kq = torch.einsum("b l d, b m d -> b l m", key, query) # (batch, length, length)
@@ -74,12 +74,12 @@ class NeuralMemory(nn.Module):
         self.num_head = num_head
         self.dim_hidden = dim_hidden
         self.log_base_lr = nn.Parameter(torch.ones(num_head) * np.log(base_lr))
-        self.log_base_weight_decay = nn.Parameter(torch.ones(num_head) * np.log(base_weight_decay))
-        self.linear_query = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
-        self.linear_key = nn.Parameter(torch.randn(dim_hidden, dim) * dim ** -0.5)
-        self.linear_value = nn.Parameter(torch.randn(dim, dim) * dim ** -0.5)
         self.fc_lr = nn.Linear(dim, num_head)
+        self.log_base_weight_decay = nn.Parameter(torch.ones(num_head) * np.log(base_weight_decay))
         self.fc_weight_decay = nn.Linear(dim, num_head)
+        self.fc_query = nn.Linear(dim, dim_hidden)
+        self.fc_key = nn.Linear(dim, dim_hidden)
+        self.fc_value = nn.Linear(dim, dim)
 
     def forward(self, x, hidden):
         batch, length, dim = x.shape
@@ -87,11 +87,11 @@ class NeuralMemory(nn.Module):
         dim_hidden = self.dim_hidden
         dim_head = self.dim_hidden // num_head
         W_prev = hidden.view(batch, dim, num_head, dim_head).transpose(2,1) # (batch, num_head, dim, dim_head)
-        query = F.linear(x, self.linear_query).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
-        key = F.linear(x, self.linear_key).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
-        value = F.linear(x, self.linear_value) # (batch, length, dim)
+        query = self.fc_query(x).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
+        key = self.fc_key(x).view(batch, length, num_head, dim_head).transpose(2,1) # (batch, length, dim_head)
+        value = self.fc_value(x) # (batch, length, dim)
         lr = (torch.exp(self.log_base_lr) * F.sigmoid(self.fc_lr(x))).transpose(2,1) # (batch, num_head, length)
-        log_weight_decay = torch.log(torch.exp(self.log_base_weight_decay) * F.sigmoid(self.fc_weight_decay(x))).transpose(2,1) # (batch, num_head, length)
+        log_weight_decay = torch.log(1-torch.exp(self.log_base_weight_decay) * F.sigmoid(self.fc_weight_decay(x))).transpose(2,1) # (batch, num_head, length)
         weight_decay_cross_chunk = torch.exp(torch.cumsum(log_weight_decay, dim=2)) # (batch, num_head, length)
         weight_decay_inner_chunk = torch.exp(torch.cumsum(einops.repeat(log_weight_decay, "b n l -> b n m l", m=length).triu(1), dim=2)).triu() # (batch, num_head, length, length)
         kq = torch.einsum("b n l d, b n m d -> b n l m", key, query) # (batch, num_head, length, length)
