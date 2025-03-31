@@ -1,8 +1,8 @@
 _target_: src.model.neural_memory.NeuralMemoryLM
 _partial_: True
 dim: 1024
-base_lr: 0.001
-base_weight_decay: 0.01
+base_lr: 0.0001
+base_weight_decay: 0.001
 depth: 16
 dim_ff_hidden: 2048
 num_head: 8
