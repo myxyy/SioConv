@@ -1,0 +1,6 @@
+_target_: src.model.sioconvrs.SioConvRS
+_partial_: True
+dim: 1024
+depth: 16
+dim_ff_hidden: 2048
+dropout: 0.1
