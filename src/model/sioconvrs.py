@@ -85,11 +85,9 @@ class SioConvRSLayer(nn.Module):
         else:
             last_hidden = self.last_hidden.detach()
 
-        forget_before_sigmoid = self.fc_forget(x)
-        ln_forget = -F.softplus(-forget_before_sigmoid) # (batch, len, dim)
-        h_cross_chunk = last_hidden * torch.exp(ln_forget.sum(1)) # (batch, len, dim)
+        forget = F.sigmoid(self.fc_forget(x)) # (batch, len, dim)
+        h_cross_chunk = last_hidden[:,None,:] * forget.cumprod(1) # (batch, len, dim)
 
-        forget = F.sigmoid(forget_before_sigmoid) # (batch, len, dim)
         input = self.fc_input(x) * self.act(self.fc_input_gate(x))
         h_inner_chunk = scan(forget.transpose(2,1).reshape(batch * dim, len), input.transpose(2,1).reshape(batch * dim, len)).reshape(batch, dim, len).transpose(2,1)
 
