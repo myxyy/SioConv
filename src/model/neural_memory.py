@@ -39,7 +39,7 @@ class FFNSwiGLU(nn.Module):
 def silu_backward(x):
     return F.silu(x) + F.sigmoid(x) * (1 - F.silu(x))
 
-class SingleHeadNeuralMemoryMLP(nn.Module):
+class SingleHeadMLPTTTLayer(nn.Module):
     def __init__(self, dim: int, dim_hidden: int, base_lr: float, base_weight_decay: float):
         super().__init__()
         self.log_base_lr = nn.Parameter(torch.tensor(np.log(base_lr)))
@@ -90,7 +90,7 @@ class SingleHeadNeuralMemoryMLP(nn.Module):
         hidden_next = {"W1": W1_next, "W2": W2_next}
         return Z2_, hidden_next
 
-class MultiHeadNeuralMemoryMLP(nn.Module):
+class MultiHeadMLPTTTLayer(nn.Module):
     def __init__(self, dim: int, dim_hidden: int, num_head: int, base_lr: float, base_weight_decay: float):
         super().__init__()
         assert dim % num_head == 0, "dim must be divisible by num_head"
@@ -154,7 +154,7 @@ class ChunkwiseNeuralMemoryMLP(nn.Module):
     def __init__(self, dim: int, dim_hidden: int, num_head: int, base_lr: float, base_weight_decay: float, chunk_size: int):
         super().__init__()
         self.chunk_size = chunk_size
-        self.memory = MultiHeadNeuralMemoryMLP(dim, dim_hidden, num_head, base_lr, base_weight_decay)
+        self.memory = MultiHeadMLPTTTLayer(dim, dim_hidden, num_head, base_lr, base_weight_decay)
         self.last_hidden = None
         head_dim = dim // num_head
         head_dim_hidden = dim_hidden // num_head
@@ -199,7 +199,7 @@ class ChunkwiseNeuralMemoryMLP(nn.Module):
 
 
 
-class SingleHeadNeuralMemoryLinear(nn.Module):
+class SingleHeadLinearTTTLayer(nn.Module):
     def __init__(self, dim: int, dim_hidden:int, base_lr: float, base_weight_decay: float):
         super().__init__()
         self.log_base_lr = nn.Parameter(torch.tensor(np.log(base_lr)))
@@ -231,7 +231,7 @@ class SingleHeadNeuralMemoryLinear(nn.Module):
         W_next = W_next_inner_chunk + W_next_cross_chunk # (batch, dim, dim_hidden)
         return y, W_next
  
-class NeuralMemoryLinear(nn.Module):
+class MultiHeadLinearTTTLayer(nn.Module):
     def __init__(self, dim: int, dim_hidden:int, num_head: int, base_lr: float, base_weight_decay: float):
         super().__init__()
         self.num_head = num_head
