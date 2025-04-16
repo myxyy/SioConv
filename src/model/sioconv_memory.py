@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import einops
 from .sioconvrs import SioConvRSLayer
-from neural_memory import ChunkwiseNeuralMemory
+from neural_memory import ChunkwiseNeuralMemoryMLP
 
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine=True, device=None):
@@ -42,7 +42,7 @@ class SioConvMemoryBlock(nn.Module):
     def __init__(self, dim: int, dim_ff_hidden: int, num_head: int, base_lr: float, base_weight_decay: float, chunk_size: int, dropout: float):
         super().__init__()
         self.sioconv = SioConvRSLayer(dim)
-        self.memory = ChunkwiseNeuralMemory(dim, dim_ff_hidden, num_head, base_lr, base_weight_decay, chunk_size)
+        self.memory = ChunkwiseNeuralMemoryMLP(dim, dim_ff_hidden, num_head, base_lr, base_weight_decay, chunk_size)
         self.ffn = FFNSwiGLU(dim, dim_ff_hidden)
         self.norm_sioconv = RMSNorm(dim)
         self.norm_memory = RMSNorm(dim)

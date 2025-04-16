@@ -17,7 +17,7 @@ train:
     max_lr: 1e-3
   log_dir: "logs/sioconv_memory_natsume/"
   pipeline_checkpoint: 'never'
-  batch_size_per_acc: 8
+  batch_size_per_acc: 16
 
 predict:
   weight: "weight/weight_sioconv_memory_natsume.ckpt"
