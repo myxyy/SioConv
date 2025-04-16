@@ -47,7 +47,7 @@ def scan(a, b):
     b_even = b[:,:-1 if is_odd else None:2]
     b_odd = b[:,1::2]
     a_next = a_odd * a_even
-    b_next = a_even * b_even + b_odd
+    b_next = a_odd * b_even + b_odd
     b_new = b.clone()
     mask_odd = torch.zeros(length, device=a.device)
     mask_odd[1::2] = 1
