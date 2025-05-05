@@ -46,18 +46,24 @@ def scan(a, b):
     a_odd = a[:,1::2]
     b_even = b[:,:-1 if is_odd else None:2]
     b_odd = b[:,1::2]
-    a_next = a_odd * a_even
-    b_next = a_odd * b_even + b_odd
     mask_odd = torch.zeros(length, device=a.device, dtype=a.dtype)
     mask_odd[1::2] = 1
     mask_odd = mask_odd[None,:]
-    b_new = b * (1-mask_odd) + F.pad(scan(a_next, b_next).repeat_interleave(2, dim=1), (0,1) if is_odd else (0,0), value=0) * mask_odd
+    b_new = torch.addcmul(
+        torch.addcmul(b,b,mask_odd,value=-1),
+        F.pad(scan(a_odd * a_even, torch.addcmul(b_odd, a_odd, b_even)).repeat_interleave(2, dim=1), (0,1) if is_odd else (0,0), value=0),
+        mask_odd
+    )
     b_odd_new = b_new[:,1:None if is_odd else -1:2]
     a_even_new = a[:,2::2]
     mask_even = torch.zeros(length, device=a.device, dtype=a.dtype)
     mask_even[2::2] = 1
     mask_even = mask_even[None,:]
-    b_new = b_new + F.pad((a_even_new * b_odd_new).repeat_interleave(2, dim=1), (1,0) if is_odd else (1,1), value=0) * mask_even
+    b_new = torch.addcmul(
+        b_new,
+        F.pad((a_even_new * b_odd_new).repeat_interleave(2, dim=1), (1,0) if is_odd else (1,1), value=0),
+        mask_even
+    )
     return b_new
 
 class QuasiLSTM(nn.Module):
@@ -84,12 +90,11 @@ class QuasiLSTM(nn.Module):
             last_hidden = self.last_hidden.detach()
 
         forget = F.sigmoid(self.fc_forget(x)) # (batch, len, dim)
-        h_cross_chunk = last_hidden[:,None,:] * forget.cumprod(1) # (batch, len, dim)
 
         input = self.tanh(self.fc_input(x)) * self.sigmoid(self.fc_input_gate(x))
         h_inner_chunk = scan(forget.transpose(2,1).reshape(batch * dim, len), input.transpose(2,1).reshape(batch * dim, len)).reshape(batch, dim, len).transpose(2,1)
 
-        h = h_inner_chunk + h_cross_chunk
+        h = torch.addcmul(h_inner_chunk, last_hidden[:,None,:], forget.cumprod(1))
 
         if self.is_refresh:
             self.last_hidden = h[:,-1,:]
