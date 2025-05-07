@@ -1,4 +1,4 @@
-_target_: src.model.sconv.SConv
+_target_: model.sconv.SConv
 _partial_: True
 dim: 2048
 depth: 36

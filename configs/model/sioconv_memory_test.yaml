@@ -1,4 +1,4 @@
-_target_: src.model.neural_memory.NeuralMemoryLM
+_target_: model.neural_memory.NeuralMemoryLM
 _partial_: True
 dim: 1024
 base_lr: 0.0001

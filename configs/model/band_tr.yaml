@@ -1,4 +1,4 @@
-_target_: src.model.band_transformer.BandTransformer
+_target_: model.band_transformer.BandTransformer
 _partial_: True
 dim: 1024
 num_head: 8

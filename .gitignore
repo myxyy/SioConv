@@ -8,6 +8,8 @@ lightning_logs*
 logs/*
 outputs/
 poetry.lock
+uv.lock
 sp/*.model
 src/test.py
 datasets/
+.venv/

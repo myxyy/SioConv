@@ -1,4 +1,4 @@
-_target_: src.text_loader.InterleaveHFChatDataset
+_target_: text_loader.InterleaveHFChatDataset
 dataset_list:
   - _target_: datasets.load_dataset
     path: "shi3z/ja_conv_wikipedia_llama2pro8b_30k"

@@ -1,0 +1,19 @@
+services:
+  dev:
+    container_name: sioconv
+    image: sioconv
+    build:
+      context: .
+      dockerfile: Dockerfile
+    tty: true
+    shm_size: 16G
+    volumes:
+      - ./:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    runtime: nvidia

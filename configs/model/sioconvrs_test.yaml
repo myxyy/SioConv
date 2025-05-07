@@ -1,4 +1,4 @@
-_target_: src.model.sioconvrs.SioConvRS
+_target_: model.sioconvrs.SioConvRS
 _partial_: True
 dim: 1024
 depth: 16

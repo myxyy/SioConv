@@ -1,2 +1,2 @@
-_target_: src.tokenizer.sentencepiece_tokenizer.SentencePieceTokenizer
+_target_: tokenizer.sentencepiece_tokenizer.SentencePieceTokenizer
 model_path: sp/wiki-ja.model

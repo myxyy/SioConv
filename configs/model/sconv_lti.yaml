@@ -1,4 +1,4 @@
-_target_: src.model.sconv_lti.SConvLTI
+_target_: model.sconv_lti.SConvLTI
 _partial_: True
 dim: 2048
 depth: 36

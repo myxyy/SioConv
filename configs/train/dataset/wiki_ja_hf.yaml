@@ -1,4 +1,4 @@
-_target_: src.text_loader.HFDataset
+_target_: text_loader.HFDataset
 dataset:
   _target_: datasets.load_dataset
   path: "graelo/wikipedia"

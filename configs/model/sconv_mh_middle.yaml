@@ -1,4 +1,4 @@
-_target_: src.model.sconv_mh.SConvMH
+_target_: model.sconv_mh.SConvMH
 _partial_: True
 dim: 4096
 num_head: 16

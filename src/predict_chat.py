@@ -1,7 +1,6 @@
 import torchvision.transforms as transforms
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
 import numpy as np
 import hydra
 from hydra.utils import instantiate

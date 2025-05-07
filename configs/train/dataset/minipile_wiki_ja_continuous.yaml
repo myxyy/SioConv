@@ -1,4 +1,4 @@
-_target_: src.text_loader.ContinuousInterleaveHFDataset
+_target_: text_loader.ContinuousInterleaveHFDataset
 dataset_list:
   - _target_: datasets.load_dataset
     path: "JeanKaddour/minipile"

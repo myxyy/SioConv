@@ -1,4 +1,4 @@
-_target_: src.model.sioconvps.SioConvPS
+_target_: model.sioconvps.SioConvPS
 _partial_: True
 dim: 2048
 depth: 36

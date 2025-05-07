@@ -1,4 +1,4 @@
-_target_: src.model.quasi_lstm.QuasiLSTMLM
+_target_: model.quasi_lstm.QuasiLSTMLM
 _partial_: True
 dim: 1024
 depth: 16

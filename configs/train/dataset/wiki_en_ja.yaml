@@ -1,4 +1,4 @@
-_target_: src.text_loader.InterleaveHFDataset
+_target_: text_loader.InterleaveHFDataset
 dataset_list:
   - _target_: datasets.load_dataset
     path: "wikimedia/wikipedia"

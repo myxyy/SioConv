@@ -1,4 +1,4 @@
-_target_: src.model.dlb.DLB
+_target_: model.dlb.DLB
 _partial_: True
 dim: 1024
 dim_hidden: 2048

@@ -2,9 +2,7 @@ import torchvision
 from text_loader import TextDataset
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
 import os
-from pytorch_lightning.loggers import TensorBoardLogger
 import hydra
 from hydra.utils import instantiate
 from tqdm import tqdm
