@@ -17,5 +17,5 @@ column_list:
   - "text"
 tokenizer: ${tokenizer}
 size: ${train.length}
-cache_path: "datasets/wiki_cont.mmap"
+cache_path: "resources/datasets/wiki_cont.mmap"
 seed: 123

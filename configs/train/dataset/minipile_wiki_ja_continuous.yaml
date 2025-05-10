@@ -16,5 +16,5 @@ column_list:
   - "text"
 tokenizer: ${tokenizer}
 size: ${train.length}
-cache_path: "datasets/minipile_wiki_ja_continous.mmap"
+cache_path: "resources/datasets/minipile_wiki_ja_continous.mmap"
 seed: 123

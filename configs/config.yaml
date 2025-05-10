@@ -6,4 +6,4 @@ defaults:
   - train: default.yaml
   - predict: default.yaml
   - tokenizer: elyza.yaml
-tokenized_text_dir_path: text_tokenized
+tokenized_text_dir_path: resources/text_tokenized

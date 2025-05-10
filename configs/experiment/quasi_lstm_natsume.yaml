@@ -7,7 +7,7 @@ defaults:
   - override /train/dataset: natsume 
 
 train:
-  weight: "weight/weight_quasi_lstm_natsume.ckpt"
+  weight: "resources/weight/weight_quasi_lstm_natsume.ckpt"
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
@@ -15,9 +15,9 @@ train:
   scheduler:
     base_lr: 3e-4
     max_lr: 1e-3
-  log_dir: "logs/quasi_lstm_natsume/"
+  log_dir: "resources/logs/quasi_lstm_natsume/"
   pipeline_checkpoint: 'never'
   batch_size_per_acc: 8
 
 predict:
-  weight: "weight/weight_quasi_lstm_natsume.ckpt"
+  weight: "resources/weight/weight_quasi_lstm_natsume.ckpt"

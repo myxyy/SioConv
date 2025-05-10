@@ -7,16 +7,16 @@ defaults:
   - override /train/dataset: wiki_en_ja
 
 train:
-  weight: "weight/weight_sioconvps_wiki_en_ja.ckpt"
+  weight: "resources/weight/weight_sioconvps_wiki_en_ja.ckpt"
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
   scheduler:
     base_lr: 3e-4
     max_lr: 1e-3
-  log_dir: "logs/sioconvps_wiki_en_ja/"
+  log_dir: "resources/logs/sioconvps_wiki_en_ja/"
   pipeline_checkpoint: 'never'
   batch_size_per_acc: 8
 
 predict:
-  weight: "weight/weight_sioconvps_wiki_en_ja.ckpt"
+  weight: "resources/weight/weight_sioconvps_wiki_en_ja.ckpt"

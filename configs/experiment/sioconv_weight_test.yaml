@@ -4,4 +4,4 @@ defaults:
   - override /model: sioconv 
 
 predict:
-  weight: "weight/weight.ckpt"
+  weight: "resources/weight/weight.ckpt"

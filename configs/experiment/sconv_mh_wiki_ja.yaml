@@ -7,18 +7,18 @@ defaults:
   - override /train/dataset: wiki_ja_hf 
 
 train:
-  weight: "weight/weight_sconv_mh_natsume.ckpt"
+  weight: "resources/weight/weight_sconv_mh_natsume.ckpt"
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
   scheduler:
     base_lr: 3e-4
     max_lr: 1e-3
-  log_dir: "logs/sconv_mh_natusme/"
+  log_dir: "resources/logs/sconv_mh_natusme/"
   pipeline_checkpoint: 'never'
   batch_size_per_acc: 5
   max_epochs: 100
   is_refresh: true 
 
 predict:
-  weight: "weight/weight_sconv_mh_natsume.ckpt"
+  weight: "resources/weight/weight_sconv_mh_natsume.ckpt"

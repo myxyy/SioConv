@@ -9,6 +9,7 @@ services:
     shm_size: 16G
     volumes:
       - ./:/workspace
+      - resources:/workspace/resources/ # exclude this from the build context
     deploy:
       resources:
         reservations:
@@ -17,3 +18,11 @@ services:
               count: all
               capabilities: [gpu]
     runtime: nvidia
+
+volumes:
+  resources:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${RESOURCES_DIR}
+      o: bind

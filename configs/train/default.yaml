@@ -11,7 +11,7 @@ log_every_n_updates: 100
 defaults:
   - dataset: wiki_ja_hf.yaml
   - scheduler: inv_prop_decay.yaml
-weight: "weight/weight.ckpt"
+weight: "resources/weight/weight.ckpt"
 pipeline_checkpoint: 'never'
 #pipeline_checkpoint: 'except_last'
 out_only_device: false
@@ -42,7 +42,7 @@ optimizer:
 logger:
   _target_: torch.utils.tensorboard.SummaryWriter
   _partial_: true
-  log_dir: "logs/"
+  log_dir: "resources/logs/"
 
 grad_clip: 2.0
 

@@ -1,5 +1,5 @@
 _target_: text_loader.TextDataset
-path: "text/natsume.txt"
+path: "resources/text/natsume.txt"
 size: ${train.length}
 tokenizer: ${tokenizer}
 tokenized_file_name: ${tokenized_text_dir_path}/natsume.npy

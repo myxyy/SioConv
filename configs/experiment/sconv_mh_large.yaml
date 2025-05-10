@@ -6,13 +6,13 @@ defaults:
   - override /train/scheduler: cyclic
 
 train:
-  weight: "weight/weight_sconv_mh.ckpt"
+  weight: "resources/weight/weight_sconv_mh.ckpt"
   optimizer:
     lr: 1e-7
   log_every_n_updates: 100
   scheduler:
     base_lr: 1e-4
     max_lr: 3e-4
-  log_dir: "logs/sconv_mh/"
+  log_dir: "resources/logs/sconv_mh/"
   pipeline_checkpoint: 'except_last'
   batch_size_per_acc: 4

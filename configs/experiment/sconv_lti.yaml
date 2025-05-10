@@ -4,4 +4,4 @@ defaults:
   - override /model: sconv_lti
 
 train:
-  weight: "weight/weight_sconv_lti.ckpt"
+  weight: "resources/weight/weight_sconv_lti.ckpt"
