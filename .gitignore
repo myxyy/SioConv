@@ -11,6 +11,6 @@ poetry.lock
 uv.lock
 sp/*.model
 src/test.py
-resources/datasets/*
+resources/*
 .venv/
 .env
