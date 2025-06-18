@@ -11,7 +11,7 @@ np.set_printoptions(threshold=np.inf)
 @hydra.main(version_base=None, config_path="../configs/", config_name="config")
 def main(cfg):
     devices = cfg.predict.devices
-    ckpt = torch.load(cfg.predict.weight)
+    ckpt = torch.load(cfg.predict.weight, map_location=torch.device('cpu'))
     tokenizer = instantiate(cfg.tokenizer)
     model = instantiate(cfg.model)
     vocab_size = tokenizer.vocab_size
