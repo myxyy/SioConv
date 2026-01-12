@@ -10,7 +10,7 @@ reset_steps: false
 log_every_n_updates: 100
 defaults:
   - dataset: wiki_ja_hf.yaml
-  - scheduler: inv_prop_decay.yaml
+  - scheduler: null
 weight: "resources/weight/weight.ckpt"
 pipeline_checkpoint: 'never'
 #pipeline_checkpoint: 'except_last'
