@@ -124,7 +124,18 @@ class MultiHeadMLPTTTLayer(nn.Module):
         Z1 = torch.einsum("b n h d, b n l d -> b n l h", W1_prev, X1) # (batch, num_head, length, head_dim_hidden)
         X2 = F.silu(Z1) # (batch, num_head, length, head_dim_hidden)
         Z2 = torch.einsum("b n d h, b n l h -> b n l d", W2_prev, X2) # (batch, num_head, length, head_dim)
-        grad_Z2 = Z2 - value # (batch, num_head, length, head_dim)
+        eps = 1e-5
+        LNZ2 = F.layer_norm(Z2, (head_dim,), eps=eps) # (batch, num_head, length, head_dim)
+        grad_LNZ2 = LNZ2 - value # (batch, num_head, length, head_dim)
+        grad_Z2 = (
+            (Z2.var(dim=-1, keepdim=True, correction=0) + eps) ** (-0.5)
+            / head_dim
+            * (
+                head_dim * grad_LNZ2
+                - grad_LNZ2.sum(dim=-1, keepdim=True)
+                - LNZ2 * (grad_LNZ2 * LNZ2).sum(dim=-1, keepdim=True)
+            )
+        )  # (batch, num_head, length, head_dim) 
         grad_X2 = torch.einsum("b n d h, b n l d -> b n l h", W2_prev, grad_Z2) # (batch, num_head, length, head_dim_hidden)
         grad_Z1 = silu_backward(Z1) * grad_X2 # (batch, num_head, length, head_dim_hidden)
         #grad_X1 = torch.einsum("b n h d, b n l h -> b n l d", W1_prev, grad_Z1) # (batch, num_head, length, head_dim)
@@ -147,7 +158,8 @@ class MultiHeadMLPTTTLayer(nn.Module):
         W2_next_cross_chunk = W2_prev * weight_decay_cross_chunk[:,:,-1][:,:,None,None] # (batch, num_head, head_dim, head_dim_hidden)
         W2_next = W2_next_inner_chunk + W2_next_cross_chunk # (batch, num_head, head_dim, head_dim_hidden)
         hidden_next = {"W1": W1_next, "W2": W2_next}
-        return self.fc_out(Z2_.transpose(2,1).reshape(batch, length, dim)), hidden_next
+        LNZ2_ = F.layer_norm(Z2_, (head_dim,), eps=eps) # (batch, num_head, length, head_dim)
+        return self.fc_out(LNZ2_.transpose(2,1).reshape(batch, length, dim)), hidden_next
 
 
 class ChunkwiseNeuralMemoryMLP(nn.Module):
